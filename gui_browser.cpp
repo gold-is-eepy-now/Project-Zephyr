@@ -15,10 +15,13 @@
 #include <vector>
 #include <sstream>
 #include "browser_core.h"
+#include "layout.h"
 
-static HWND hwndAddress, hwndGo, hwndBack, hwndForward, hwndText, hwndLinks;
+static HWND hwndAddress, hwndGo, hwndBack, hwndForward, hwndContent, hwndText, hwndLinks;
 static std::vector<std::string> history;
 static int hist_index = -1;
+//static std::unique_ptr<browser::JSEngine> js_engine;
+static browser::ElementPtr current_document;
 
 void load_url_into_ui(const std::string &url) {
     try {
@@ -39,11 +42,23 @@ void load_url_into_ui(const std::string &url) {
         
         // Parse document with DOM and CSS
         browser::RenderContext ctx = browser::parse_document(r.body, css);
+        current_document = ctx.document;
         
-        // Extract text and links for now (we'll add proper rendering later)
         std::string plain;
         std::vector<std::pair<std::string,std::string>> links;
         extract_text_and_links(r.body, plain, links);
+        
+        // Update UI
+        SetWindowTextA(hwndText, plain.c_str());
+        SendMessage(hwndLinks, LB_RESETCONTENT, 0, 0);
+        for (size_t i = 0; i < links.size(); ++i) {
+            std::ostringstream item;
+            item << (i+1) << ": " << links[i].first << " -> " << links[i].second;
+            SendMessageA(hwndLinks, LB_ADDSTRING, 0, (LPARAM)item.str().c_str());
+        }
+        
+        // Force redraw of content area
+        InvalidateRect(hwndContent, NULL, TRUE);
 
         // update text control
         SetWindowTextA(hwndText, plain.c_str());
@@ -84,8 +99,23 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         hwndBack = CreateWindowW(L"BUTTON", L"◀", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 500, 10, 36, 24, hWnd, (HMENU)1002, NULL, NULL);
         hwndForward = CreateWindowW(L"BUTTON", L"▶", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 540, 10, 36, 24, hWnd, (HMENU)1003, NULL, NULL);
 
-        hwndText = CreateWindowW(L"EDIT", NULL, WS_CHILD | WS_VISIBLE | WS_BORDER | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | WS_VSCROLL, 10, 50, 560, 360, hWnd, NULL, NULL, NULL);
-        hwndLinks = CreateWindowW(L"LISTBOX", NULL, WS_CHILD | WS_VISIBLE | LBS_NOTIFY | WS_VSCROLL, 580, 50, 260, 360, hWnd, NULL, NULL, NULL);
+        hwndText = CreateWindowW(L"EDIT", NULL, 
+            WS_CHILD | WS_VISIBLE | WS_BORDER | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | WS_VSCROLL,
+            10, 50, 560, 360, hWnd, NULL, NULL, NULL);
+        hwndLinks = CreateWindowW(L"LISTBOX", NULL,
+            WS_CHILD | WS_VISIBLE | LBS_NOTIFY | WS_VSCROLL,
+            580, 50, 260, 360, hWnd, NULL, NULL, NULL);
+            
+        // Create custom window class for content area
+        WNDCLASSW wc = {};
+        wc.lpfnWndProc = DefWindowProcW;
+        wc.hInstance = GetModuleHandle(NULL);
+        wc.lpszClassName = L"BrowserContentClass";
+        RegisterClassW(&wc);
+        
+        hwndContent = CreateWindowW(L"BrowserContentClass", NULL, 
+            WS_CHILD | WS_VISIBLE | WS_BORDER | WS_VSCROLL | WS_HSCROLL,
+            850, 50, 400, 360, hWnd, NULL, NULL, NULL);
         break; }
 
     case WM_COMMAND: {
@@ -134,6 +164,24 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
         }
         break; }
 
+    case WM_PAINT: {
+        if (current_document) {
+            PAINTSTRUCT ps;
+            HDC hdc = BeginPaint(hwndContent, &ps);
+            
+            // Create layout engine and compute layout
+            browser::LayoutEngine layout(hdc);
+            RECT rect;
+            GetClientRect(hwndContent, &rect);
+            auto box = layout.computeLayout(current_document, browser::StyleSheet(), rect.right - rect.left);
+            
+            // Render the layout
+            layout.render(box);
+            
+            EndPaint(hwndContent, &ps);
+        }
+        break; }
+        
     case WM_DESTROY:
         PostQuitMessage(0);
         return 0;
