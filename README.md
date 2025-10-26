@@ -5,6 +5,8 @@ Features
 - Simple HTTP/1.0 client implemented with sockets (no TLS / HTTPS)
 - Tiny HTML extractor that strips tags and finds simple <a href> links
 - Console UI: displays text and numbered links, lets you follow links, go back/forward
+- (BETA) HTML and CSS
+- (ALPHA) JS Compatability
 
 Limitations / assumptions
 - Only supports http:// URLs (no HTTPS). This keeps the implementation from relying on external TLS libraries.
@@ -61,4 +63,5 @@ Next steps (suggested)
 - Add HTTPS support with OpenSSL or platform TLS APIs.
 - Improve HTML parsing and rendering (basic layout, CSS).
 - Add a GUI (e.g., using a cross-platform toolkit) for richer rendering.
+
 
