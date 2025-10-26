@@ -1,6 +1,5 @@
-# Mini C++ Console Browser
-
-This is a tiny, original educational browser written in C++.
+# web
+web
 
 Features
 - Simple HTTP/1.0 client implemented with sockets (no TLS / HTTPS)
@@ -62,3 +61,4 @@ Next steps (suggested)
 - Add HTTPS support with OpenSSL or platform TLS APIs.
 - Improve HTML parsing and rendering (basic layout, CSS).
 - Add a GUI (e.g., using a cross-platform toolkit) for richer rendering.
+
