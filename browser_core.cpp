@@ -60,6 +60,10 @@ std::string collapse_whitespace(const std::string& s) {
 std::string decode_html_entities(const std::string& text) {
     std::string out;
     out.reserve(text.size());
+std::string decode_html_entities(const std::string& text) {
+    std::string out;
+    out.reserve(text.size());
+
     for (size_t i = 0; i < text.size(); ++i) {
         if (text[i] == '&') {
             const size_t semicolon = text.find(';', i + 1);
@@ -90,10 +94,30 @@ std::string decode_html_entities(const std::string& text) {
     return out;
 }
 
+
+    return out;
+}
+
+std::string collapse_whitespace(const std::string& s) {
+    std::string out;
+    bool in_ws = false;
+    for (unsigned char ch : s) {
+        if (std::isspace(ch)) {
+            if (!in_ws) out.push_back(' ');
+            in_ws = true;
+        } else {
+            out.push_back(static_cast<char>(ch));
+            in_ws = false;
+        }
+    }
+    return trim(out);
+}
+
 std::string normalize_path(const std::string& path) {
     std::vector<std::string> segs;
     std::stringstream ss(path);
     std::string segment;
+
     while (std::getline(ss, segment, '/')) {
         if (segment.empty() || segment == ".") continue;
         if (segment == "..") {
@@ -158,6 +182,12 @@ size_t curl_header_cb(char* ptr, size_t size, size_t nmemb, void* userdata) {
         if (colon != std::string::npos) {
             response->headers[to_lower(trim(line.substr(0, colon)))] = trim(line.substr(colon + 1));
         }
+        return bytes;
+    }
+
+    const auto colon = line.find(':');
+    if (colon != std::string::npos) {
+        response->headers[to_lower(trim(line.substr(0, colon)))] = trim(line.substr(colon + 1));
     }
     return bytes;
 }
@@ -208,6 +238,10 @@ bool parse_url(const string& url, UrlParts& out) {
     out.scheme = to_lower(url.substr(0, scheme_pos));
 
     const std::string rest = url.substr(scheme_pos + 3);
+
+    out.scheme = to_lower(url.substr(0, scheme_pos));
+    const std::string rest = url.substr(scheme_pos + 3);
+
     const auto path_pos = rest.find('/');
     std::string host_port = (path_pos == std::string::npos) ? rest : rest.substr(0, path_pos);
     out.path = (path_pos == std::string::npos) ? "/" : rest.substr(path_pos);
@@ -256,12 +290,17 @@ HttpResponse http_get(const string& url, int timeout_seconds, int redirect_limit
 
     UrlParts up;
     if (!parse_url(url, up)) throw std::runtime_error("Only http:// and https:// URLs supported");
+    if (!parse_url(url, up)) {
+        throw std::runtime_error("Only http:// and https:// URLs supported");
+    }
 
 #ifdef ZEPHYR_USE_CURL
     CURL* curl = curl_easy_init();
     if (!curl) throw std::runtime_error("curl_easy_init failed");
 
     HttpResponse response;
+    response.status_line = "HTTP/1.1 000";
+
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
     curl_easy_setopt(curl, CURLOPT_MAXREDIRS, static_cast<long>(redirect_limit));
@@ -269,6 +308,7 @@ HttpResponse http_get(const string& url, int timeout_seconds, int redirect_limit
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, timeout_seconds);
     curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "ZephyrBrowser/3.0");
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "ZephyrBrowser/2.0");
     curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "http,https");
     curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
@@ -293,6 +333,7 @@ HttpResponse http_get(const string& url, int timeout_seconds, int redirect_limit
     return response;
 #else
     init_sockets();
+
     struct addrinfo hints {};
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
@@ -324,6 +365,7 @@ HttpResponse http_get(const string& url, int timeout_seconds, int redirect_limit
     req << "GET " << up.path << " HTTP/1.1\r\n";
     req << "Host: " << up.host << "\r\n";
     req << "User-Agent: ZephyrBrowser/3.0\r\n";
+    req << "User-Agent: ZephyrBrowser/2.0\r\n";
     req << "Connection: close\r\n\r\n";
 
     const string request = req.str();
@@ -391,6 +433,22 @@ void extract_text_and_links(const string& html, string& out_text, std::vector<st
 
         if (tag_lower.rfind("a", 0) == 0) {
             std::string href = extract_tag_attribute(tag, "href");
+            std::string href;
+            if (const auto href_pos = tag_lower.find("href"); href_pos != std::string::npos) {
+                if (const auto eq = tag.find('=', href_pos); eq != string::npos) {
+                    size_t value_start = eq + 1;
+                    while (value_start < tag.size() && std::isspace(static_cast<unsigned char>(tag[value_start]))) ++value_start;
+                    if (value_start < tag.size() && (tag[value_start] == '"' || tag[value_start] == '\'')) {
+                        const char quote = tag[value_start++];
+                        const size_t value_end = tag.find(quote, value_start);
+                        href = tag.substr(value_start, value_end - value_start);
+                    } else {
+                        const size_t value_end = tag.find_first_of(" \t", value_start);
+                        href = tag.substr(value_start, value_end - value_start);
+                    }
+                }
+            }
+
             const size_t close = lower_html.find("</a>", tag_end + 1);
             const size_t content_end = (close == string::npos) ? html.size() : close;
             const std::string inner = html.substr(tag_end + 1, content_end - tag_end - 1);

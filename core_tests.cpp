@@ -27,6 +27,18 @@ int main() {
     std::string text;
     std::vector<std::pair<std::string, std::string>> links;
     extract_text_and_links(sample, text, links);
+    assert(parts.host == "example.com");
+    assert(parse_url("https://example.com/a/b", parts));
+    assert(parts.port == 443);
+
+    assert(resolve_url("http://example.com/a/b", "../c") == "http://example.com/c");
+    assert(resolve_url("https://example.com/a/b", "../c") == "https://example.com/c");
+    assert(resolve_url("http://example.com/a/b", "javascript:alert(1)").empty());
+
+    std::string text;
+    std::vector<std::pair<std::string, std::string>> links;
+    extract_text_and_links("<html><body><a href='https://x'>A &#66; &amp; C</a><script>alert(1)</script></body></html>", text, links);
+    assert(!text.empty());
     assert(text.find("A B & C") != std::string::npos);
     assert(links.size() == 1);
 

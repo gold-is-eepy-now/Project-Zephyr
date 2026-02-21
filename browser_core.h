@@ -1,5 +1,6 @@
 // browser_core.h
 // Shared core: HTTP(S) client and lightweight HTML/CSS/JS source extraction helpers.
+// Shared core: HTTP(S) client and lightweight HTML extraction/parsing helpers.
 #pragma once
 
 #include <map>
