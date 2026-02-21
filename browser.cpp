@@ -1,108 +1,106 @@
-// console wrapper that uses browser_core
 #include "browser_core.h"
 
+#include <algorithm>
 #include <iostream>
+#include <string>
 #include <vector>
-#include <functional>
 
 using std::string;
 
-int main(int argc, char **argv) {
+int main(int argc, char** argv) {
     std::vector<string> history;
-    int hist_index = -1;
+    int history_index = -1;
 
-    std::function<int(const string&)> open_url;
-    open_url = [&](const string &url) -> int {
+    string current_url;
+    if (argc > 1) {
+        current_url = argv[1];
+    } else {
+        std::cout << "Enter URL (http://...): ";
+        std::getline(std::cin, current_url);
+    }
+    if (current_url.find("://") == string::npos) current_url = "http://" + current_url;
+
+    bool running = true;
+    while (running) {
         try {
-            HttpResponse r = http_get(url);
+            HttpResponse response = http_get(current_url);
             string plain;
-            std::vector<std::pair<string,string>> links;
-            extract_text_and_links(r.body, plain, links);
+            std::vector<std::pair<string, string>> links;
+            extract_text_and_links(response.body, plain, links);
 
-            std::cout << "\n=== " << url << " ===\n";
-            std::cout << r.status_line << "\n";
-            for (auto &h : r.headers) std::cout << h.first << ": " << h.second << "\n";
-            std::cout << "\n";
-            std::cout << plain << "\n\n";
+            if (history_index + 1 < static_cast<int>(history.size())) {
+                history.resize(history_index + 1);
+            }
+            if (history.empty() || history.back() != current_url) {
+                history.push_back(current_url);
+                history_index = static_cast<int>(history.size()) - 1;
+            }
+
+            std::cout << "\n=== " << current_url << " ===\n";
+            std::cout << response.status_line << "\n";
+            for (const auto& [k, v] : response.headers) {
+                std::cout << k << ": " << v << "\n";
+            }
+            std::cout << "\n" << plain << "\n";
 
             if (!links.empty()) {
-                std::cout << "Links:\n";
+                std::cout << "\nLinks:\n";
                 for (size_t i = 0; i < links.size(); ++i) {
-                    std::cout << "[" << (i+1) << "] " << links[i].first << " -> " << links[i].second << "\n";
+                    std::cout << "[" << (i + 1) << "] " << links[i].first << " -> " << links[i].second << "\n";
                 }
-            } else {
-                std::cout << "(no links found)\n";
             }
 
-            if (hist_index + 1 < (int)history.size()) history.resize(hist_index+1);
-            history.push_back(url);
-            hist_index = (int)history.size() - 1;
+            std::cout << "\nCommand ([number] follow, url <url>, back, forward, reload, quit): ";
+            string cmd;
+            if (!std::getline(std::cin, cmd)) break;
+            if (cmd == "quit") break;
 
-            for (;;) {
-                std::cout << "\nCommand ([number] follow, url <url>, back, forward, quit): ";
-                string cmd;
-                if (!std::getline(std::cin, cmd)) return 0;
-                if (cmd.empty()) continue;
-                if (cmd == "quit") return 0;
-                if (cmd == "back") {
-                    if (hist_index > 0) {
-                        hist_index -= 1;
-                        open_url(history[hist_index]);
-                        return 0;
-                    } else { std::cout << "No back history.\n"; continue; }
-                }
-                if (cmd == "forward") {
-                    if (hist_index + 1 < (int)history.size()) {
-                        hist_index += 1;
-                        open_url(history[hist_index]);
-                        return 0;
-                    } else { std::cout << "No forward history.\n"; continue; }
-                }
-                if (cmd.rfind("url ", 0) == 0) {
-                    string newurl = cmd.substr(4);
-                    if (newurl.find("://") == string::npos) newurl = "http://" + newurl;
-                    open_url(newurl);
-                    return 0;
-                }
-                bool all_digits = std::all_of(cmd.begin(), cmd.end(), [](char c){ return std::isdigit((unsigned char)c); });
-                if (all_digits) {
-                    int n = stoi(cmd);
-                    if (n >= 1 && n <= (int)links.size()) {
-                        string href = links[n-1].second;
-                        string next;
-                        if (href.rfind("http://", 0) == 0) next = href;
-                        else {
-                            UrlParts parts;
-                            parse_url(url, parts);
-                            if (!href.empty() && href[0] == '/') {
-                                next = parts.scheme + "://" + parts.host + href;
-                            } else {
-                                string base = parts.path;
-                                auto p = base.rfind('/');
-                                if (p == string::npos) base = "/"; else base = base.substr(0, p+1);
-                                next = parts.scheme + "://" + parts.host + base + href;
-                            }
-                        }
-                        open_url(next);
-                        return 0;
-                    } else { std::cout << "Invalid link number.\n"; }
-                }
-                std::cout << "Unknown command.\n";
+            if (cmd == "reload") continue;
+
+            if (cmd == "back") {
+                if (history_index > 0) current_url = history[--history_index];
+                else std::cout << "No back history.\n";
+                continue;
             }
 
-        } catch (const std::exception &ex) {
+            if (cmd == "forward") {
+                if (history_index + 1 < static_cast<int>(history.size())) current_url = history[++history_index];
+                else std::cout << "No forward history.\n";
+                continue;
+            }
+
+            if (cmd.rfind("url ", 0) == 0) {
+                current_url = cmd.substr(4);
+                if (current_url.find("://") == string::npos) current_url = "http://" + current_url;
+                continue;
+            }
+
+            const bool digits_only = !cmd.empty() &&
+                std::all_of(cmd.begin(), cmd.end(), [](char c) { return std::isdigit(static_cast<unsigned char>(c)); });
+            if (digits_only) {
+                const int index = std::stoi(cmd);
+                if (index >= 1 && index <= static_cast<int>(links.size())) {
+                    const string next = resolve_url(current_url, links[index - 1].second);
+                    if (!next.empty()) current_url = next;
+                    else std::cout << "Blocked unsafe or malformed link target.\n";
+                } else {
+                    std::cout << "Invalid link number.\n";
+                }
+                continue;
+            }
+
+            std::cout << "Unknown command.\n";
+        } catch (const std::exception& ex) {
             std::cerr << "Error: " << ex.what() << "\n";
+            std::cout << "Type a new URL (or 'quit'): ";
+            string fallback;
+            if (!std::getline(std::cin, fallback) || fallback == "quit") {
+                running = false;
+            } else {
+                current_url = (fallback.find("://") == string::npos) ? "http://" + fallback : fallback;
+            }
         }
-        return 0;
-    };
-
-    string start;
-    if (argc > 1) start = argv[1];
-    else {
-        std::cout << "Enter URL (http://...): ";
-        std::getline(std::cin, start);
     }
-    if (start.find("://") == string::npos) start = "http://" + start;
-    open_url(start);
+
     return 0;
 }
