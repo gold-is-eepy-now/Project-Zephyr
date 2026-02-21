@@ -1,64 +1,46 @@
-# web
-web
+# Project Zephyr - Modern HTTP/HTTPS-capable Browser Core (Educational)
 
-Features
-- Simple HTTP/1.0 client implemented with sockets (no TLS / HTTPS)
-- Tiny HTML extractor that strips tags and finds simple <a href> links
-- Console UI: displays text and numbered links, lets you follow links, go back/forward
+Project Zephyr is a compact C++17 browser prototype focused on learning and iteration.
+This revision adds **HTTPS-capable transport (via libcurl when available)**, stronger parsing behavior, and a dedicated GUI redesign plan.
 
-Limitations / assumptions
-- Only supports http:// URLs (no HTTPS). This keeps the implementation from relying on external TLS libraries.
-- HTML parsing is extremely small and not standards-compliant. It's meant for demonstration only.
+## Current capabilities
 
-Build (Windows, using MinGW or similar with g++)
+- HTTP + HTTPS fetching (libcurl backend when available; socket fallback)
+- Redirect handling and protocol restrictions to `http`/`https`
+- Safe navigation filtering (`javascript:`, `data:`, `file:`, `vbscript:` blocked)
+- HTML extraction that skips `script`/`style`, decodes entities, and extracts links
+- DOM parser with attributes, comments, void tags, raw-text tag handling
+- CSS parser with selector lists, simple descendant support, specificity/source-order cascade
+- CLI browser frontend + Win32 GUI shell
+- Core unit tests via CTest
 
-Open PowerShell in this folder and run:
+## Build
 
-```powershell
-g++ -std=c++17 -O2 browser.cpp -o mini_browser.exe -lws2_32
-```
-
-On Unix (Linux/macOS), build with:
+### Linux / macOS
 
 ```bash
-g++ -std=c++17 -O2 browser.cpp -o mini_browser
+cmake -S . -B build
+cmake --build build
+ctest --test-dir build --output-on-failure
+./build/zephyr_cli https://example.com
 ```
 
-Usage
+### Windows
 
 ```powershell
-# Run and enter a URL when prompted
-.\mini_browser.exe
-
-# Or provide a URL directly
-.\mini_browser.exe http://example.com
-
-GUI build (Win32)
-
-To build the GUI version, run:
-
-```powershell
-g++ -std=c++17 -O2 gui_browser.cpp browser_core.cpp -o gui_browser.exe -lws2_32 -lgdi32
+cmake -S . -B build
+cmake --build build --config Release
+ctest --test-dir build -C Release --output-on-failure
+.\build\Release\zephyr_cli.exe https://example.com
+.\build\Release\zephyr_gui.exe
 ```
 
-Run the GUI version:
+## Notes on standards and scope
 
-```powershell
-.\gui_browser.exe
-```
-```
+- This project is still **not** a fully standards-compliant browser engine.
+- It is not equivalent to Firefox/Chromium-class browsers in JS runtime hardening, process isolation, sandboxing, and full HTML/CSS rendering compliance.
+- The goal is a safer, more modern educational architecture that can evolve incrementally.
 
-Interactive commands
-- Enter a number to follow the corresponding link shown in the page.
-- url <some-url> — open a new URL (prefix with http:// if omitted)
-- back, forward — navigate history
-- quit — exit
+## GUI redesign plan
 
-Testing
-- The repository includes a small PowerShell script (`run_test.ps1`) to build and fetch `http://example.com` and show output.
-
-Next steps (suggested)
-- Add HTTPS support with OpenSSL or platform TLS APIs.
-- Improve HTML parsing and rendering (basic layout, CSS).
-- Add a GUI (e.g., using a cross-platform toolkit) for richer rendering.
-
+See `GUI_REDESIGN_PLAN.md` for a full chrome-like (but distinctly Zephyr) redesign roadmap.
