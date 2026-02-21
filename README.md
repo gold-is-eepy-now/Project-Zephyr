@@ -1,4 +1,4 @@
-# Project Zephyr - Modern HTTP/HTTPS-capable Browser Core (Educational)
+# Project Zephyr - Modern HTTP/HTTPS-capable Browser Core 
 
 Project Zephyr is a compact C++17 browser prototype focused on learning and iteration.
 This revision adds **HTTPS-capable transport (via libcurl when available)**, stronger parsing behavior, and a dedicated GUI redesign plan.
