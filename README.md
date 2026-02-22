@@ -1,64 +1,43 @@
-# web
-web
+# Project Zephyr - Lightweight Web Page Browser
 
-Features
-- Simple HTTP/1.0 client implemented with sockets (no TLS / HTTPS)
-- Tiny HTML extractor that strips tags and finds simple <a href> links
-- Console UI: displays text and numbered links, lets you follow links, go back/forward
+Zephyr now focuses on **readable page display** instead of showing raw fetch logs or source blobs.
 
-Limitations / assumptions
-- Only supports http:// URLs (no HTTPS). This keeps the implementation from relying on external TLS libraries.
-- HTML parsing is extremely small and not standards-compliant. It's meant for demonstration only.
+## What this build does
 
-Build (Windows, using MinGW or similar with g++)
+- Fetches pages over HTTP/HTTPS (libcurl backend when available).
+- Parses HTML into a lightweight DOM and applies basic CSS cascade rules.
+- Renders readable page content to CLI and the Win32 GUI text viewport.
+- Hides non-visual tags (`script`, `style`, `head`, `meta`, etc.) in the rendered view.
+- Preserves link URLs inline so navigation targets remain visible.
 
-Open PowerShell in this folder and run:
+## Important note
 
-```powershell
-g++ -std=c++17 -O2 browser.cpp -o mini_browser.exe -lws2_32
-```
+- This is still not a pixel-perfect browser engine. It is a text-first renderer.
+- JavaScript/TypeScript are not executed.
 
-On Unix (Linux/macOS), build with:
+## Build
+
+### Linux / macOS
 
 ```bash
-g++ -std=c++17 -O2 browser.cpp -o mini_browser
+cmake -S . -B build
+cmake --build build
+ctest --test-dir build --output-on-failure
+./build/zephyr_cli http://frogfind.com
+./build/zephyr_cli https://duckduckgo.com
 ```
 
-Usage
+### Windows
 
 ```powershell
-# Run and enter a URL when prompted
-.\mini_browser.exe
-
-# Or provide a URL directly
-.\mini_browser.exe http://example.com
-
-GUI build (Win32)
-
-To build the GUI version, run:
-
-```powershell
-g++ -std=c++17 -O2 gui_browser.cpp browser_core.cpp -o gui_browser.exe -lws2_32 -lgdi32
+cmake -S . -B build
+cmake --build build --config Release
+ctest --test-dir build -C Release --output-on-failure
+.\build\Release\zephyr_cli.exe http://frogfind.com
+.\build\Release\zephyr_cli.exe https://duckduckgo.com
+.\build\Release\zephyr_gui.exe
 ```
 
-Run the GUI version:
+## GUI redesign roadmap
 
-```powershell
-.\gui_browser.exe
-```
-```
-
-Interactive commands
-- Enter a number to follow the corresponding link shown in the page.
-- url <some-url> — open a new URL (prefix with http:// if omitted)
-- back, forward — navigate history
-- quit — exit
-
-Testing
-- The repository includes a small PowerShell script (`run_test.ps1`) to build and fetch `http://example.com` and show output.
-
-Next steps (suggested)
-- Add HTTPS support with OpenSSL or platform TLS APIs.
-- Improve HTML parsing and rendering (basic layout, CSS).
-- Add a GUI (e.g., using a cross-platform toolkit) for richer rendering.
-
+See `GUI_REDESIGN_PLAN.md`.

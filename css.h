@@ -2,7 +2,6 @@
 
 #include "dom.h"
 #include <string>
-#include <map>
 #include <vector>
 
 namespace browser {
@@ -29,29 +28,41 @@ struct StyleProperties {
     int padding_right = 0;
     int padding_bottom = 0;
     int padding_left = 0;
+
+    bool has_display = false;
+    bool has_color = false;
+    bool has_background_color = false;
+    bool has_font_family = false;
+    bool has_font_size = false;
+    bool has_font_weight = false;
+    bool has_margin = false;
+    bool has_padding = false;
 };
 
 class StyleSheet {
 public:
     struct Selector {
+        std::string ancestor_tag;
         std::string tag;
         std::string id;
         std::vector<std::string> classes;
     };
-    
+
     struct Rule {
         Selector selector;
         StyleProperties properties;
+        int specificity = 0;
+        size_t source_order = 0;
     };
-    
+
     void addRule(const Selector& selector, const StyleProperties& properties);
     StyleProperties computeStyle(const ElementPtr& element) const;
-    
+
 private:
     std::vector<Rule> rules;
+    size_t rule_counter = 0;
 };
 
-// CSS Parser
 StyleSheet parse_css(const std::string& css);
 
 } // namespace browser
