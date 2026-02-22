@@ -7,6 +7,26 @@
 int main() {
     UrlParts parts;
     assert(parse_url("http://example.com/a/b", parts));
+    assert(parse_url("https://example.com/a/b", parts));
+
+    assert(resolve_url("https://example.com/a/b", "../c") == "https://example.com/c");
+    assert(resolve_url("http://example.com/a/b", "javascript:alert(1)").empty());
+
+    const std::string sample =
+        "<html><head><style>body{color:red;}</style></head>"
+        "<body><script>console.log('js');</script>"
+        "<script type='text/typescript'>const x:number=1;</script>"
+        "<a href='https://x'>A &#66; &amp; C</a></body></html>";
+
+    SourceBundle src = extract_source_bundle(sample);
+    assert(src.html.find("<html>") != std::string::npos);
+    assert(src.css.find("body{color:red;}") != std::string::npos);
+    assert(src.javascript.find("console.log") != std::string::npos);
+    assert(src.typescript.find("x:number") != std::string::npos);
+
+    std::string text;
+    std::vector<std::pair<std::string, std::string>> links;
+    extract_text_and_links(sample, text, links);
     assert(parts.host == "example.com");
     assert(parse_url("https://example.com/a/b", parts));
     assert(parts.port == 443);

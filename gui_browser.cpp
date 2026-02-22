@@ -18,6 +18,19 @@
 #include "browser_core.h"
 
 static HWND hwndAddress;
+static HWND hwndSource;
+
+static std::vector<std::string> history;
+static int history_index = -1;
+
+static std::string build_source_text(const SourceBundle& src) {
+    std::string out;
+    out += "================ HTML ================\r\n" + src.html + "\r\n\r\n";
+    out += "================ CSS ================\r\n" + (src.css.empty() ? std::string("(none)") : src.css) + "\r\n\r\n";
+    out += "============= JavaScript =============\r\n" + (src.javascript.empty() ? std::string("(none)") : src.javascript) + "\r\n\r\n";
+    out += "============= TypeScript =============\r\n" + (src.typescript.empty() ? std::string("(none)") : src.typescript) + "\r\n";
+    return out;
+}
 static HWND hwndText;
 static HWND hwndLinks;
 
@@ -28,6 +41,11 @@ static std::vector<std::pair<std::string, std::string>> last_links;
 void load_url_into_ui(const std::string& url, bool push_history = true) {
     try {
         HttpResponse response = http_get(url);
+        SourceBundle src = extract_source_bundle(response.body);
+
+        SetWindowTextA(hwndAddress, url.c_str());
+        const std::string source_text = build_source_text(src);
+        SetWindowTextA(hwndSource, source_text.c_str());
         const std::string css = extract_style_blocks(response.body);
         browser::RenderContext ctx = browser::parse_document(response.body, css);
         (void)ctx;
@@ -53,6 +71,7 @@ void load_url_into_ui(const std::string& url, bool push_history = true) {
             }
         }
     } catch (const std::exception& ex) {
+        SetWindowTextA(hwndSource, ex.what());
         SetWindowTextA(hwndText, ex.what());
     }
 }
@@ -65,6 +84,23 @@ std::string get_address_text() {
 }
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    (void)lParam;
+    switch (msg) {
+        case WM_CREATE: {
+            CreateWindowW(L"STATIC", L"Address", WS_CHILD | WS_VISIBLE, 10, 14, 50, 20, hWnd, nullptr, nullptr, nullptr);
+            hwndAddress = CreateWindowW(L"EDIT", L"https://duckduckgo.com", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_LEFT,
+                                        70, 10, 560, 24, hWnd, nullptr, nullptr, nullptr);
+
+            CreateWindowW(L"BUTTON", L"Go", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                          640, 10, 60, 24, hWnd, reinterpret_cast<HMENU>(1001), nullptr, nullptr);
+            CreateWindowW(L"BUTTON", L"◀", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                          710, 10, 36, 24, hWnd, reinterpret_cast<HMENU>(1002), nullptr, nullptr);
+            CreateWindowW(L"BUTTON", L"▶", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                          750, 10, 36, 24, hWnd, reinterpret_cast<HMENU>(1003), nullptr, nullptr);
+
+            hwndSource = CreateWindowW(L"EDIT", nullptr,
+                                       WS_CHILD | WS_VISIBLE | WS_BORDER | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | WS_VSCROLL | WS_HSCROLL,
+                                       10, 50, 960, 500, hWnd, nullptr, nullptr, nullptr);
     switch (msg) {
         case WM_CREATE: {
             CreateWindowW(L"STATIC", L"Address", WS_CHILD | WS_VISIBLE, 10, 14, 50, 20, hWnd, nullptr, nullptr, nullptr);
@@ -93,6 +129,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             const int id = LOWORD(wParam);
             if (id == 1001) {
                 std::string url = get_address_text();
+                if (url.find("://") == std::string::npos) url = "https://" + url;
                 if (url.find("://") == std::string::npos) url = "http://" + url;
                 load_url_into_ui(url, true);
             } else if (id == 1002) {
@@ -129,6 +166,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInstance;
     wc.lpszClassName = CLASS_NAME;
+    RegisterClassW(&wc);
+
+    HWND hwnd = CreateWindowExW(0, CLASS_NAME, L"Zephyr Source Browser",
+                                WS_OVERLAPPEDWINDOW,
+                                CW_USEDEFAULT, CW_USEDEFAULT, 1000, 620,
 
     RegisterClassW(&wc);
 
@@ -142,6 +184,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     ShowWindow(hwnd, nCmdShow);
     UpdateWindow(hwnd);
 
+    load_url_into_ui("https://duckduckgo.com", true);
     load_url_into_ui("http://example.com", true);
 
     MSG msg;

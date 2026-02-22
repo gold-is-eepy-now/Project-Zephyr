@@ -42,6 +42,24 @@ std::string trim(const std::string& s) {
     return s.substr(start, end - start + 1);
 }
 
+std::string collapse_whitespace(const std::string& s) {
+    std::string out;
+    bool in_ws = false;
+    for (unsigned char ch : s) {
+        if (std::isspace(ch)) {
+            if (!in_ws) out.push_back(' ');
+            in_ws = true;
+        } else {
+            out.push_back(static_cast<char>(ch));
+            in_ws = false;
+        }
+    }
+    return trim(out);
+}
+
+std::string decode_html_entities(const std::string& text) {
+    std::string out;
+    out.reserve(text.size());
 std::string decode_html_entities(const std::string& text) {
     std::string out;
     out.reserve(text.size());
@@ -73,6 +91,9 @@ std::string decode_html_entities(const std::string& text) {
         }
         out.push_back(text[i]);
     }
+    return out;
+}
+
 
     return out;
 }
@@ -114,6 +135,30 @@ std::string normalize_path(const std::string& path) {
     return out;
 }
 
+std::string extract_tag_attribute(const std::string& tag_text, const std::string& attr_name) {
+    const std::string lower = to_lower(tag_text);
+    const std::string needle = to_lower(attr_name);
+    const auto pos = lower.find(needle);
+    if (pos == std::string::npos) return "";
+
+    const auto eq = tag_text.find('=', pos);
+    if (eq == std::string::npos) return "";
+
+    size_t start = eq + 1;
+    while (start < tag_text.size() && std::isspace(static_cast<unsigned char>(tag_text[start]))) ++start;
+    if (start >= tag_text.size()) return "";
+
+    if (tag_text[start] == '"' || tag_text[start] == '\'') {
+        const char quote = tag_text[start++];
+        const size_t end = tag_text.find(quote, start);
+        if (end == std::string::npos) return "";
+        return trim(tag_text.substr(start, end - start));
+    }
+
+    const size_t end = tag_text.find_first_of(" \t\r\n", start);
+    return trim(tag_text.substr(start, end - start));
+}
+
 #ifdef ZEPHYR_USE_CURL
 size_t curl_write_cb(char* ptr, size_t size, size_t nmemb, void* userdata) {
     auto* body = static_cast<std::string*>(userdata);
@@ -132,6 +177,11 @@ size_t curl_header_cb(char* ptr, size_t size, size_t nmemb, void* userdata) {
 
     if (line.rfind("HTTP/", 0) == 0) {
         response->status_line = line;
+    } else {
+        const auto colon = line.find(':');
+        if (colon != std::string::npos) {
+            response->headers[to_lower(trim(line.substr(0, colon)))] = trim(line.substr(colon + 1));
+        }
         return bytes;
     }
 
@@ -185,6 +235,9 @@ void set_socket_timeouts(SOCKET s, int timeout_seconds) {
 bool parse_url(const string& url, UrlParts& out) {
     const auto scheme_pos = url.find("://");
     if (scheme_pos == string::npos) return false;
+    out.scheme = to_lower(url.substr(0, scheme_pos));
+
+    const std::string rest = url.substr(scheme_pos + 3);
 
     out.scheme = to_lower(url.substr(0, scheme_pos));
     const std::string rest = url.substr(scheme_pos + 3);
@@ -236,6 +289,7 @@ HttpResponse http_get(const string& url, int timeout_seconds, int redirect_limit
     if (redirect_limit < 0) throw std::runtime_error("Redirect limit exceeded");
 
     UrlParts up;
+    if (!parse_url(url, up)) throw std::runtime_error("Only http:// and https:// URLs supported");
     if (!parse_url(url, up)) {
         throw std::runtime_error("Only http:// and https:// URLs supported");
     }
@@ -253,6 +307,7 @@ HttpResponse http_get(const string& url, int timeout_seconds, int redirect_limit
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, timeout_seconds);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, timeout_seconds);
     curl_easy_setopt(curl, CURLOPT_ACCEPT_ENCODING, "");
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, "ZephyrBrowser/3.0");
     curl_easy_setopt(curl, CURLOPT_USERAGENT, "ZephyrBrowser/2.0");
     curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "http,https");
     curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
@@ -309,6 +364,7 @@ HttpResponse http_get(const string& url, int timeout_seconds, int redirect_limit
     std::ostringstream req;
     req << "GET " << up.path << " HTTP/1.1\r\n";
     req << "Host: " << up.host << "\r\n";
+    req << "User-Agent: ZephyrBrowser/3.0\r\n";
     req << "User-Agent: ZephyrBrowser/2.0\r\n";
     req << "Connection: close\r\n\r\n";
 
@@ -376,6 +432,7 @@ void extract_text_and_links(const string& html, string& out_text, std::vector<st
         if (in_script || in_style) { i = tag_end + 1; continue; }
 
         if (tag_lower.rfind("a", 0) == 0) {
+            std::string href = extract_tag_attribute(tag, "href");
             std::string href;
             if (const auto href_pos = tag_lower.find("href"); href_pos != std::string::npos) {
                 if (const auto eq = tag.find('=', href_pos); eq != string::npos) {
@@ -437,6 +494,45 @@ string extract_style_blocks(const string& html) {
     }
 
     return css;
+}
+
+SourceBundle extract_source_bundle(const string& html) {
+    SourceBundle b;
+    b.html = html;
+    b.css = extract_style_blocks(html);
+
+    const std::string lower = to_lower(html);
+    size_t pos = 0;
+
+    while ((pos = lower.find("<script", pos)) != string::npos) {
+        const size_t open_end = lower.find('>', pos);
+        if (open_end == string::npos) break;
+
+        const std::string open_tag = html.substr(pos + 1, open_end - pos - 1);
+        const std::string type_attr = to_lower(extract_tag_attribute(open_tag, "type"));
+        const std::string src_attr = extract_tag_attribute(open_tag, "src");
+        const bool is_typescript = type_attr.find("typescript") != std::string::npos || type_attr.find("text/ts") != std::string::npos;
+
+        const size_t close = lower.find("</script>", open_end + 1);
+        std::string body;
+        if (close != string::npos) body = html.substr(open_end + 1, close - open_end - 1);
+
+        std::string block;
+        if (!src_attr.empty()) block += "// external script src=" + src_attr + "\n";
+        if (!trim(body).empty()) {
+            block += body;
+            if (block.back() != '\n') block.push_back('\n');
+        }
+
+        if (!trim(block).empty()) {
+            if (is_typescript) b.typescript += block + "\n";
+            else b.javascript += block + "\n";
+        }
+
+        pos = (close == string::npos) ? html.size() : close + 9;
+    }
+
+    return b;
 }
 
 namespace browser {
