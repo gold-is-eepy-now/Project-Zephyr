@@ -2,6 +2,11 @@
 
 #include <algorithm>
 #include <cctype>
+#include <functional>
+#include <cstring>
+#include <sstream>
+#include <stdexcept>
+#include <unordered_set>
 #include <cstring>
 #include <sstream>
 #include <stdexcept>
@@ -533,6 +538,102 @@ SourceBundle extract_source_bundle(const string& html) {
     }
 
     return b;
+}
+
+
+string render_page_text(const string& html, size_t wrap_width) {
+    const std::string css = extract_style_blocks(html);
+    browser::RenderContext ctx = browser::parse_document(html, css);
+    if (!ctx.document) return "";
+
+    auto is_block_tag = [](const std::string& tag) {
+        static const std::unordered_set<std::string> blocks = {
+            "html", "body", "main", "article", "section", "header", "footer", "nav", "aside",
+            "div", "p", "pre", "blockquote", "ul", "ol", "li", "table", "tr", "td", "th",
+            "h1", "h2", "h3", "h4", "h5", "h6", "form", "fieldset", "legend"};
+        return blocks.count(tag) != 0;
+    };
+
+    auto should_skip_tag = [](const std::string& tag) {
+        return tag == "script" || tag == "style" || tag == "noscript" || tag == "meta" || tag == "link";
+    };
+
+    auto display_none = [&](const browser::ElementPtr& el) {
+        auto style = ctx.stylesheet.computeStyle(el);
+        if (style.has_display && style.display == "none") return true;
+        const std::string inline_style = to_lower(el->getAttribute("style"));
+        return inline_style.find("display:none") != std::string::npos;
+    };
+
+    std::string out;
+    size_t line_len = 0;
+
+    auto newline = [&]() {
+        out.push_back('\n');
+        line_len = 0;
+    };
+
+    std::function<void(const browser::NodePtr&)> walk;
+    walk = [&](const browser::NodePtr& node) {
+        if (!node) return;
+        if (node->type == browser::NodeType::TEXT) {
+            auto t = std::dynamic_pointer_cast<browser::TextNode>(node);
+            if (!t) return;
+            std::string text = collapse_whitespace(decode_html_entities(t->text));
+            if (text.empty()) return;
+            std::istringstream iss(text);
+            std::string word;
+            while (iss >> word) {
+                if (line_len > 0) {
+                    if (line_len + 1 + word.size() > wrap_width) newline();
+                    else {
+                        out.push_back(' ');
+                        ++line_len;
+                    }
+                }
+                out += word;
+                line_len += word.size();
+            }
+            return;
+        }
+
+        auto el = std::dynamic_pointer_cast<browser::Element>(node);
+        if (!el) return;
+        const std::string tag = el->tag_name;
+        if (should_skip_tag(tag) || display_none(el)) return;
+
+        const bool is_block = is_block_tag(tag);
+        if (tag == "br") newline();
+        if (is_block && line_len > 0) newline();
+
+        if (tag == "li") {
+            if (line_len > 0) newline();
+            out += "- ";
+            line_len = 2;
+        }
+
+        for (const auto& child : el->children) walk(child);
+
+        if (tag == "a") {
+            std::string href = el->getAttribute("href");
+            if (!href.empty() && is_safe_navigation_target(href)) {
+                std::string suffix = " (" + href + ")";
+                if (line_len + suffix.size() > wrap_width && line_len > 0) newline();
+                out += suffix;
+                line_len += suffix.size();
+            }
+        }
+
+        if (is_block && line_len > 0) newline();
+    };
+
+    walk(ctx.document);
+
+    while (out.find("\n\n\n") != std::string::npos) {
+        out.replace(out.find("\n\n\n"), 3, "\n\n");
+    }
+
+    return trim(out);
 }
 
 namespace browser {

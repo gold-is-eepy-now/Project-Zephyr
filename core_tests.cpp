@@ -27,6 +27,17 @@ int main() {
     std::string text;
     std::vector<std::pair<std::string, std::string>> links;
     extract_text_and_links(sample, text, links);
+    assert(text.find("A B & C") != std::string::npos);
+    assert(links.size() == 1);
+
+    const std::string rendered = render_page_text(
+        "<html><body><h1>Hello</h1><p>World <a href='https://x'>link</a></p><span style='display:none'>hide</span></body></html>",
+        80);
+    assert(rendered.find("Hello") != std::string::npos);
+    assert(rendered.find("World") != std::string::npos);
+    assert(rendered.find("https://x") != std::string::npos);
+    assert(rendered.find("hide") == std::string::npos);
+
     assert(parts.host == "example.com");
     assert(parse_url("https://example.com/a/b", parts));
     assert(parts.port == 443);

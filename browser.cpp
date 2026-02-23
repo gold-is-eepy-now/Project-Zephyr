@@ -43,6 +43,9 @@ int main(int argc, char** argv) {
     while (running) {
         try {
             HttpResponse response = http_get(current_url);
+            const std::string rendered = render_page_text(response.body, 100);
+
+            if (history_index + 1 < static_cast<int>(history.size())) history.resize(history_index + 1);
             SourceBundle src = extract_source_bundle(response.body);
 
             if (history_index + 1 < static_cast<int>(history.size())) history.resize(history_index + 1);
@@ -58,6 +61,9 @@ int main(int argc, char** argv) {
                 history_index = static_cast<int>(history.size()) - 1;
             }
 
+            std::cout << "\n=== " << current_url << " ===\n\n";
+            if (rendered.empty()) std::cout << "(No renderable body content)\n\n";
+            else std::cout << rendered << "\n\n";
             std::cout << "\n=== " << current_url << " ===\n";
             std::cout << response.status_line << "\n";
             for (const auto& [k, v] : response.headers) std::cout << k << ": " << v << "\n";

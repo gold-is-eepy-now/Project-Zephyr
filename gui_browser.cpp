@@ -18,11 +18,19 @@
 #include "browser_core.h"
 
 static HWND hwndAddress;
+static HWND hwndPage;
 static HWND hwndSource;
 
 static std::vector<std::string> history;
 static int history_index = -1;
 
+void load_url_into_ui(const std::string& url, bool push_history = true) {
+    try {
+        HttpResponse response = http_get(url);
+        const std::string page_text = render_page_text(response.body, 110);
+
+        SetWindowTextA(hwndAddress, url.c_str());
+        SetWindowTextA(hwndPage, page_text.empty() ? "(No renderable body content)" : page_text.c_str());
 static std::string build_source_text(const SourceBundle& src) {
     std::string out;
     out += "================ HTML ================\r\n" + src.html + "\r\n\r\n";
@@ -71,6 +79,7 @@ void load_url_into_ui(const std::string& url, bool push_history = true) {
             }
         }
     } catch (const std::exception& ex) {
+        SetWindowTextA(hwndPage, ex.what());
         SetWindowTextA(hwndSource, ex.what());
         SetWindowTextA(hwndText, ex.what());
     }
@@ -98,6 +107,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
             CreateWindowW(L"BUTTON", L"▶", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
                           750, 10, 36, 24, hWnd, reinterpret_cast<HMENU>(1003), nullptr, nullptr);
 
+            hwndPage = CreateWindowW(L"EDIT", nullptr,
+                                     WS_CHILD | WS_VISIBLE | WS_BORDER | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | WS_VSCROLL,
+                                     10, 50, 960, 500, hWnd, nullptr, nullptr, nullptr);
             hwndSource = CreateWindowW(L"EDIT", nullptr,
                                        WS_CHILD | WS_VISIBLE | WS_BORDER | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | WS_VSCROLL | WS_HSCROLL,
                                        10, 50, 960, 500, hWnd, nullptr, nullptr, nullptr);
@@ -168,6 +180,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     wc.lpszClassName = CLASS_NAME;
     RegisterClassW(&wc);
 
+    HWND hwnd = CreateWindowExW(0, CLASS_NAME, L"Zephyr Browser",
+                                WS_OVERLAPPEDWINDOW,
+                                CW_USEDEFAULT, CW_USEDEFAULT, 1000, 620,
     HWND hwnd = CreateWindowExW(0, CLASS_NAME, L"Zephyr Source Browser",
                                 WS_OVERLAPPEDWINDOW,
                                 CW_USEDEFAULT, CW_USEDEFAULT, 1000, 620,

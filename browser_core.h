@@ -36,6 +36,7 @@ HttpResponse http_get(const string& url, int timeout_seconds = 10, int redirect_
 void extract_text_and_links(const string& html, string& out_text, std::vector<std::pair<string, string>>& out_links);
 string extract_style_blocks(const string& html);
 SourceBundle extract_source_bundle(const string& html);
+string render_page_text(const string& html, size_t wrap_width = 100);
 
 #include "dom.h"
 #include "css.h"
