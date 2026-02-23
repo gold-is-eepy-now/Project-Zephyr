@@ -1,3 +1,8 @@
+// Minimal Win32 GUI browser using the shared core.
+// - Address bar + Go button
+// - Read-only multi-line Edit control to show extracted page text
+// - ListBox for links (double-click to follow)
+
 #define UNICODE
 #define _UNICODE
 #define WIN32_LEAN_AND_MEAN
@@ -5,96 +10,66 @@
 #define _WIN32_WINNT 0x0600
 
 #include <windows.h>
-#include <commctrl.h>
 
+#include <sstream>
 #include <string>
 #include <vector>
 
 #include "browser_core.h"
 
-#pragma comment(lib, "Comctl32.lib")
+static HWND hwndAddress;
+static HWND hwndPage;
+static HWND hwndSource;
 
-namespace {
-constexpr int IDC_GO = 1001;
-constexpr int IDC_BACK = 1002;
-constexpr int IDC_FORWARD = 1003;
-constexpr int IDC_RELOAD = 1004;
-constexpr int IDC_HOME = 1005;
-constexpr int IDC_TAB = 1006;
+static std::vector<std::string> history;
+static int history_index = -1;
 
-constexpr int kPadding = 10;
-constexpr int kTabHeight = 30;
-constexpr int kToolbarHeight = 34;
-
-HWND hwndTab;
-HWND hwndAddress;
-HWND hwndPage;
-HWND hwndStatus;
-
-std::vector<std::string> history;
-int history_index = -1;
-
-void set_status(const std::string& text) {
-    if (hwndStatus) SendMessageA(hwndStatus, SB_SETTEXTA, 0, reinterpret_cast<LPARAM>(text.c_str()));
-}
-
-std::string normalize_url(std::string url) {
-    if (url.find("://") == std::string::npos) url = "https://" + url;
-    return url;
-}
-
-void apply_layout(HWND hWnd) {
-    RECT rc {};
-    GetClientRect(hWnd, &rc);
-
-    const int width = rc.right - rc.left;
-    const int height = rc.bottom - rc.top;
-
-    const int tab_y = kPadding;
-    MoveWindow(hwndTab, kPadding, tab_y, width - (2 * kPadding), kTabHeight, TRUE);
-
-    const int toolbar_y = tab_y + kTabHeight + 2;
-    const int button_w = 36;
-    const int home_w = 56;
-    const int go_w = 56;
-
-    int x = kPadding;
-    MoveWindow(GetDlgItem(hWnd, IDC_BACK), x, toolbar_y, button_w, kToolbarHeight - 6, TRUE);
-    x += button_w + 6;
-    MoveWindow(GetDlgItem(hWnd, IDC_FORWARD), x, toolbar_y, button_w, kToolbarHeight - 6, TRUE);
-    x += button_w + 6;
-    MoveWindow(GetDlgItem(hWnd, IDC_RELOAD), x, toolbar_y, button_w, kToolbarHeight - 6, TRUE);
-    x += button_w + 6;
-    MoveWindow(GetDlgItem(hWnd, IDC_HOME), x, toolbar_y, home_w, kToolbarHeight - 6, TRUE);
-    x += home_w + 8;
-
-    const int address_w = width - x - go_w - kPadding;
-    MoveWindow(hwndAddress, x, toolbar_y, address_w, kToolbarHeight - 6, TRUE);
-    MoveWindow(GetDlgItem(hWnd, IDC_GO), x + address_w + 6, toolbar_y, go_w, kToolbarHeight - 6, TRUE);
-
-    RECT status_rc {};
-    SendMessageW(hwndStatus, WM_SIZE, 0, 0);
-    GetWindowRect(hwndStatus, &status_rc);
-    const int status_h = status_rc.bottom - status_rc.top;
-
-    const int page_y = toolbar_y + kToolbarHeight + 4;
-    const int page_h = height - page_y - status_h - kPadding;
-    MoveWindow(hwndPage, kPadding, page_y, width - (2 * kPadding), page_h, TRUE);
-}
-
-void update_nav_buttons(HWND hWnd) {
-    EnableWindow(GetDlgItem(hWnd, IDC_BACK), history_index > 0 ? TRUE : FALSE);
-    EnableWindow(GetDlgItem(hWnd, IDC_FORWARD), history_index + 1 < static_cast<int>(history.size()) ? TRUE : FALSE);
-}
-
-void load_url_into_ui(HWND hWnd, const std::string& url, bool push_history = true) {
+void load_url_into_ui(const std::string& url, bool push_history = true) {
     try {
-        set_status("Loading " + url + " ...");
         HttpResponse response = http_get(url);
         const std::string page_text = render_page_text(response.body, 110);
 
         SetWindowTextA(hwndAddress, url.c_str());
         SetWindowTextA(hwndPage, page_text.empty() ? "(No renderable body content)" : page_text.c_str());
+static std::string build_source_text(const SourceBundle& src) {
+    std::string out;
+    out += "================ HTML ================\r\n" + src.html + "\r\n\r\n";
+    out += "================ CSS ================\r\n" + (src.css.empty() ? std::string("(none)") : src.css) + "\r\n\r\n";
+    out += "============= JavaScript =============\r\n" + (src.javascript.empty() ? std::string("(none)") : src.javascript) + "\r\n\r\n";
+    out += "============= TypeScript =============\r\n" + (src.typescript.empty() ? std::string("(none)") : src.typescript) + "\r\n";
+    return out;
+}
+static HWND hwndText;
+static HWND hwndLinks;
+
+static std::vector<std::string> history;
+static int history_index = -1;
+static std::vector<std::pair<std::string, std::string>> last_links;
+
+void load_url_into_ui(const std::string& url, bool push_history = true) {
+    try {
+        HttpResponse response = http_get(url);
+        SourceBundle src = extract_source_bundle(response.body);
+
+        SetWindowTextA(hwndAddress, url.c_str());
+        const std::string source_text = build_source_text(src);
+        SetWindowTextA(hwndSource, source_text.c_str());
+        const std::string css = extract_style_blocks(response.body);
+        browser::RenderContext ctx = browser::parse_document(response.body, css);
+        (void)ctx;
+
+        std::string plain;
+        extract_text_and_links(response.body, plain, last_links);
+
+        SetWindowTextA(hwndText, plain.c_str());
+        SetWindowTextA(hwndAddress, url.c_str());
+
+        SendMessage(hwndLinks, LB_RESETCONTENT, 0, 0);
+        for (size_t i = 0; i < last_links.size(); ++i) {
+            std::ostringstream item;
+            item << (i + 1) << ": " << last_links[i].first << " -> " << last_links[i].second;
+            SendMessageA(hwndLinks, LB_ADDSTRING, 0, reinterpret_cast<LPARAM>(item.str().c_str()));
+        }
 
         if (push_history) {
             if (history_index + 1 < static_cast<int>(history.size())) history.resize(history_index + 1);
@@ -103,124 +78,129 @@ void load_url_into_ui(HWND hWnd, const std::string& url, bool push_history = tru
                 history_index = static_cast<int>(history.size()) - 1;
             }
         }
-
-        set_status("Done");
-        update_nav_buttons(hWnd);
     } catch (const std::exception& ex) {
         SetWindowTextA(hwndPage, ex.what());
-        set_status(std::string("Load error: ") + ex.what());
-        update_nav_buttons(hWnd);
+        SetWindowTextA(hwndSource, ex.what());
+        SetWindowTextA(hwndText, ex.what());
     }
 }
 
 std::string get_address_text() {
-    const int len = GetWindowTextLengthW(hwndAddress);
+    int len = GetWindowTextLengthW(hwndAddress);
     std::wstring w(len + 1, L'\0');
     GetWindowTextW(hwndAddress, &w[0], len + 1);
     return std::string(w.begin(), w.begin() + len);
 }
-}  // namespace
 
 LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+    (void)lParam;
     switch (msg) {
         case WM_CREATE: {
-            InitCommonControls();
-
-            hwndTab = CreateWindowW(WC_TABCONTROLW, L"",
-                                    WS_CHILD | WS_VISIBLE | WS_CLIPSIBLINGS,
-                                    0, 0, 100, 100, hWnd,
-                                    reinterpret_cast<HMENU>(IDC_TAB), nullptr, nullptr);
-            TCITEMW tie {};
-            tie.mask = TCIF_TEXT;
-            tie.pszText = const_cast<LPWSTR>(L"Zephyr");
-            TabCtrl_InsertItem(hwndTab, 0, &tie);
-
-            CreateWindowW(L"BUTTON", L"◀", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                          0, 0, 0, 0, hWnd, reinterpret_cast<HMENU>(IDC_BACK), nullptr, nullptr);
-            CreateWindowW(L"BUTTON", L"▶", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                          0, 0, 0, 0, hWnd, reinterpret_cast<HMENU>(IDC_FORWARD), nullptr, nullptr);
-            CreateWindowW(L"BUTTON", L"⟳", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                          0, 0, 0, 0, hWnd, reinterpret_cast<HMENU>(IDC_RELOAD), nullptr, nullptr);
-            CreateWindowW(L"BUTTON", L"Home", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                          0, 0, 0, 0, hWnd, reinterpret_cast<HMENU>(IDC_HOME), nullptr, nullptr);
-
-            hwndAddress = CreateWindowW(L"EDIT", L"https://duckduckgo.com",
-                                        WS_CHILD | WS_VISIBLE | WS_BORDER | ES_LEFT | ES_AUTOHSCROLL,
-                                        0, 0, 0, 0, hWnd, nullptr, nullptr, nullptr);
+            CreateWindowW(L"STATIC", L"Address", WS_CHILD | WS_VISIBLE, 10, 14, 50, 20, hWnd, nullptr, nullptr, nullptr);
+            hwndAddress = CreateWindowW(L"EDIT", L"https://duckduckgo.com", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_LEFT,
+                                        70, 10, 560, 24, hWnd, nullptr, nullptr, nullptr);
 
             CreateWindowW(L"BUTTON", L"Go", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
-                          0, 0, 0, 0, hWnd, reinterpret_cast<HMENU>(IDC_GO), nullptr, nullptr);
+                          640, 10, 60, 24, hWnd, reinterpret_cast<HMENU>(1001), nullptr, nullptr);
+            CreateWindowW(L"BUTTON", L"◀", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                          710, 10, 36, 24, hWnd, reinterpret_cast<HMENU>(1002), nullptr, nullptr);
+            CreateWindowW(L"BUTTON", L"▶", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                          750, 10, 36, 24, hWnd, reinterpret_cast<HMENU>(1003), nullptr, nullptr);
 
             hwndPage = CreateWindowW(L"EDIT", nullptr,
-                                     WS_CHILD | WS_VISIBLE | WS_BORDER | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY |
-                                         WS_VSCROLL | WS_HSCROLL,
-                                     0, 0, 0, 0, hWnd, nullptr, nullptr, nullptr);
+                                     WS_CHILD | WS_VISIBLE | WS_BORDER | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | WS_VSCROLL,
+                                     10, 50, 960, 500, hWnd, nullptr, nullptr, nullptr);
+            hwndSource = CreateWindowW(L"EDIT", nullptr,
+                                       WS_CHILD | WS_VISIBLE | WS_BORDER | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | WS_VSCROLL | WS_HSCROLL,
+                                       10, 50, 960, 500, hWnd, nullptr, nullptr, nullptr);
+    switch (msg) {
+        case WM_CREATE: {
+            CreateWindowW(L"STATIC", L"Address", WS_CHILD | WS_VISIBLE, 10, 14, 50, 20, hWnd, nullptr, nullptr, nullptr);
+            hwndAddress = CreateWindowW(L"EDIT", L"http://example.com",
+                                        WS_CHILD | WS_VISIBLE | WS_BORDER | ES_LEFT,
+                                        70, 10, 430, 24, hWnd, nullptr, nullptr, nullptr);
 
-            hwndStatus = CreateWindowW(STATUSCLASSNAMEW, L"Ready",
-                                       WS_CHILD | WS_VISIBLE | SBARS_SIZEGRIP,
-                                       0, 0, 0, 0, hWnd, nullptr, nullptr, nullptr);
+            CreateWindowW(L"BUTTON", L"Go", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                          510, 10, 60, 24, hWnd, reinterpret_cast<HMENU>(1001), nullptr, nullptr);
+            CreateWindowW(L"BUTTON", L"◀", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                          580, 10, 36, 24, hWnd, reinterpret_cast<HMENU>(1002), nullptr, nullptr);
+            CreateWindowW(L"BUTTON", L"▶", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON,
+                          620, 10, 36, 24, hWnd, reinterpret_cast<HMENU>(1003), nullptr, nullptr);
 
-            apply_layout(hWnd);
-            update_nav_buttons(hWnd);
+            hwndText = CreateWindowW(L"EDIT", nullptr,
+                                     WS_CHILD | WS_VISIBLE | WS_BORDER | ES_MULTILINE | ES_AUTOVSCROLL |
+                                         ES_READONLY | WS_VSCROLL,
+                                     10, 50, 640, 390, hWnd, nullptr, nullptr, nullptr);
+
+            hwndLinks = CreateWindowW(L"LISTBOX", nullptr,
+                                      WS_CHILD | WS_VISIBLE | LBS_NOTIFY | WS_VSCROLL,
+                                      660, 50, 280, 390, hWnd, nullptr, nullptr, nullptr);
             break;
         }
-
-        case WM_SIZE:
-            apply_layout(hWnd);
-            return 0;
-
         case WM_COMMAND: {
             const int id = LOWORD(wParam);
-            if (id == IDC_GO) {
-                load_url_into_ui(hWnd, normalize_url(get_address_text()), true);
-            } else if (id == IDC_BACK) {
+            if (id == 1001) {
+                std::string url = get_address_text();
+                if (url.find("://") == std::string::npos) url = "https://" + url;
+                if (url.find("://") == std::string::npos) url = "http://" + url;
+                load_url_into_ui(url, true);
+            } else if (id == 1002) {
                 if (history_index > 0) {
                     --history_index;
-                    load_url_into_ui(hWnd, history[history_index], false);
+                    load_url_into_ui(history[history_index], false);
                 }
-            } else if (id == IDC_FORWARD) {
+            } else if (id == 1003) {
                 if (history_index + 1 < static_cast<int>(history.size())) {
                     ++history_index;
-                    load_url_into_ui(hWnd, history[history_index], false);
+                    load_url_into_ui(history[history_index], false);
                 }
-            } else if (id == IDC_RELOAD) {
-                const std::string url = normalize_url(get_address_text());
-                load_url_into_ui(hWnd, url, false);
-            } else if (id == IDC_HOME) {
-                load_url_into_ui(hWnd, "https://duckduckgo.com", true);
+            } else if (HIWORD(wParam) == LBN_DBLCLK && reinterpret_cast<HWND>(lParam) == hwndLinks) {
+                const int sel = static_cast<int>(SendMessage(hwndLinks, LB_GETCURSEL, 0, 0));
+                if (sel != LB_ERR && sel < static_cast<int>(last_links.size())) {
+                    std::string next = resolve_url(get_address_text(), last_links[sel].second);
+                    if (!next.empty()) load_url_into_ui(next, true);
+                    else SetWindowTextA(hwndText, "Blocked unsafe or malformed link target.");
+                }
             }
-            return 0;
+            break;
         }
-
         case WM_DESTROY:
             PostQuitMessage(0);
             return 0;
     }
-
     return DefWindowProcW(hWnd, msg, wParam, lParam);
 }
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
     constexpr wchar_t CLASS_NAME[] = L"ZephyrBrowserClass";
 
-    WNDCLASSW wc {};
+    WNDCLASSW wc = {};
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInstance;
-    wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
-    wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
     wc.lpszClassName = CLASS_NAME;
     RegisterClassW(&wc);
 
     HWND hwnd = CreateWindowExW(0, CLASS_NAME, L"Zephyr Browser",
                                 WS_OVERLAPPEDWINDOW,
-                                CW_USEDEFAULT, CW_USEDEFAULT, 1200, 760,
+                                CW_USEDEFAULT, CW_USEDEFAULT, 1000, 620,
+    HWND hwnd = CreateWindowExW(0, CLASS_NAME, L"Zephyr Source Browser",
+                                WS_OVERLAPPEDWINDOW,
+                                CW_USEDEFAULT, CW_USEDEFAULT, 1000, 620,
+
+    RegisterClassW(&wc);
+
+    HWND hwnd = CreateWindowExW(0, CLASS_NAME, L"Zephyr Mini Browser",
+                                WS_OVERLAPPEDWINDOW,
+                                CW_USEDEFAULT, CW_USEDEFAULT, 980, 520,
                                 nullptr, nullptr, hInstance, nullptr);
 
     if (!hwnd) return 0;
 
     ShowWindow(hwnd, nCmdShow);
     UpdateWindow(hwnd);
-    load_url_into_ui(hwnd, "https://duckduckgo.com", true);
+
+    load_url_into_ui("https://duckduckgo.com", true);
+    load_url_into_ui("http://example.com", true);
 
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0)) {

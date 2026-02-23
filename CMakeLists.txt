@@ -28,7 +28,7 @@ target_link_libraries(zephyr_cli PRIVATE zephyr_core)
 
 if(WIN32)
     add_executable(zephyr_gui WIN32 gui_browser.cpp)
-    target_link_libraries(zephyr_gui PRIVATE zephyr_core ws2_32 gdi32 comctl32)
+    target_link_libraries(zephyr_gui PRIVATE zephyr_core ws2_32 gdi32)
 endif()
 
 enable_testing()
