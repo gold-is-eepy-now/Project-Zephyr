@@ -1,64 +1,38 @@
-# web
-web
+# Project Zephyr (Full Rewrite)
 
-Features
-- Simple HTTP/1.0 client implemented with sockets (no TLS / HTTPS)
-- Tiny HTML extractor that strips tags and finds simple <a href> links
-- Console UI: displays text and numbered links, lets you follow links, go back/forward
+This revision is a **full from-scratch rewrite** of Zephyr’s implementation while preserving the same repository shape and build targets.
 
-Limitations / assumptions
-- Only supports http:// URLs (no HTTPS). This keeps the implementation from relying on external TLS libraries.
-- HTML parsing is extremely small and not standards-compliant. It's meant for demonstration only.
+## What Zephyr is now
 
-Build (Windows, using MinGW or similar with g++)
+- A lightweight HTTP/HTTPS text browser core.
+- A DOM + CSS based text renderer for readable page output.
+- A CLI browser frontend.
+- A Chromium-inspired Win32 shell (tab strip, nav toolbar, omnibox, status bar).
 
-Open PowerShell in this folder and run:
+## Build
 
-```powershell
-g++ -std=c++17 -O2 browser.cpp -o mini_browser.exe -lws2_32
-```
-
-On Unix (Linux/macOS), build with:
+### Linux / macOS
 
 ```bash
-g++ -std=c++17 -O2 browser.cpp -o mini_browser
+cmake -S . -B build
+cmake --build build
+ctest --test-dir build --output-on-failure
+./build/zephyr_cli http://frogfind.com
+./build/zephyr_cli https://duckduckgo.com
 ```
 
-Usage
+### Windows
 
 ```powershell
-# Run and enter a URL when prompted
-.\mini_browser.exe
-
-# Or provide a URL directly
-.\mini_browser.exe http://example.com
-
-GUI build (Win32)
-
-To build the GUI version, run:
-
-```powershell
-g++ -std=c++17 -O2 gui_browser.cpp browser_core.cpp -o gui_browser.exe -lws2_32 -lgdi32
+cmake -S . -B build
+cmake --build build --config Release
+ctest --test-dir build -C Release --output-on-failure
+.\build\Release\zephyr_cli.exe http://frogfind.com
+.\build\Release\zephyr_cli.exe https://duckduckgo.com
+.\build\Release\zephyr_gui.exe
 ```
 
-Run the GUI version:
+## Notes
 
-```powershell
-.\gui_browser.exe
-```
-```
-
-Interactive commands
-- Enter a number to follow the corresponding link shown in the page.
-- url <some-url> — open a new URL (prefix with http:// if omitted)
-- back, forward — navigate history
-- quit — exit
-
-Testing
-- The repository includes a small PowerShell script (`run_test.ps1`) to build and fetch `http://example.com` and show output.
-
-Next steps (suggested)
-- Add HTTPS support with OpenSSL or platform TLS APIs.
-- Improve HTML parsing and rendering (basic layout, CSS).
-- Add a GUI (e.g., using a cross-platform toolkit) for richer rendering.
-
+- JavaScript/TypeScript are extracted but not executed.
+- The renderer is text-first, not a pixel browser engine.
