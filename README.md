@@ -6,12 +6,11 @@ Zephyr is now a **Rust-first browser project** with a new architecture intended 
 
 This repository now includes a Rust implementation for:
 
-- HTTP/HTTPS fetching (Reqwest + native TLS)
+- HTTP/HTTPS fetching (Reqwest + Rustls)
 - URL parsing and safe navigation filtering
 - HTML/CSS/JS/TS source extraction
 - Text-oriented page rendering
 - Interactive CLI browser with history/navigation
-- A cinematic dark "glass" Win32 GUI shell inspired by modern browser chrome (tabs, omnibox, hero panel, cards)
 
 ## Vision: Chromium-class open browser
 
