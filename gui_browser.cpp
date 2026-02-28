@@ -1,9 +1,3 @@
-// Minimal Win32 GUI browser using the shared core.
-// - Address bar + Go button
-// - Read-only multi-line Edit control to show text
-// - ListBox for links (double-click to follow)
-// Note: synchronous fetch on button click (UI may block briefly). This keeps the example small.
-
 #define UNICODE
 #define _UNICODE
 #define WIN32_LEAN_AND_MEAN
@@ -11,163 +5,314 @@
 #define _WIN32_WINNT 0x0600
 
 #include <windows.h>
+
 #include <string>
 #include <vector>
-#include <sstream>
+
 #include "browser_core.h"
 
-static HWND hwndAddress, hwndGo, hwndBack, hwndForward, hwndText, hwndLinks;
-static std::vector<std::string> history;
-static int hist_index = -1;
+namespace {
+constexpr int IDC_BACK = 1001;
+constexpr int IDC_FORWARD = 1002;
+constexpr int IDC_RELOAD = 1003;
+constexpr int IDC_HOME = 1004;
+constexpr int IDC_GO = 1005;
+constexpr int IDC_TAB_1 = 1101;
+constexpr int IDC_TAB_2 = 1102;
+constexpr int IDC_TAB_3 = 1103;
 
-void load_url_into_ui(const std::string &url) {
+HWND g_address = nullptr;
+HWND g_page = nullptr;
+HWND g_hero_title = nullptr;
+HWND g_hero_subtitle = nullptr;
+HWND g_card_1 = nullptr;
+HWND g_card_2 = nullptr;
+HWND g_card_3 = nullptr;
+
+HFONT g_font_ui = nullptr;
+HFONT g_font_title = nullptr;
+HFONT g_font_tabs = nullptr;
+
+HBRUSH g_brush_bg = nullptr;
+HBRUSH g_brush_top = nullptr;
+HBRUSH g_brush_hero = nullptr;
+HBRUSH g_brush_card = nullptr;
+
+COLORREF kBg = RGB(10, 14, 24);
+COLORREF kTop = RGB(24, 30, 48);
+COLORREF kHero = RGB(27, 43, 79);
+COLORREF kCard = RGB(34, 49, 84);
+COLORREF kText = RGB(235, 239, 248);
+COLORREF kMuted = RGB(176, 188, 211);
+
+std::vector<std::string> g_history;
+int g_history_index = -1;
+
+std::string normalize(std::string u) {
+    if (u.find("://") == std::string::npos) u = "https://" + u;
+    return u;
+}
+
+std::string address_text() {
+    int len = GetWindowTextLengthW(g_address);
+    std::wstring w(len + 1, L'\0');
+    GetWindowTextW(g_address, &w[0], len + 1);
+    return std::string(w.begin(), w.begin() + len);
+}
+
+void update_nav(HWND hwnd) {
+    EnableWindow(GetDlgItem(hwnd, IDC_BACK), g_history_index > 0);
+    EnableWindow(GetDlgItem(hwnd, IDC_FORWARD), g_history_index + 1 < static_cast<int>(g_history.size()));
+}
+
+void layout(HWND hwnd) {
+    RECT r{};
+    GetClientRect(hwnd, &r);
+
+    const int pad = 14;
+    const int tab_h = 34;
+    const int nav_h = 34;
+
+    int y = pad;
+    MoveWindow(GetDlgItem(hwnd, IDC_TAB_1), pad, y, 220, tab_h, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_TAB_2), pad + 226, y, 170, tab_h, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_TAB_3), pad + 402, y, 170, tab_h, TRUE);
+
+    y += tab_h + 10;
+    int x = pad;
+    MoveWindow(GetDlgItem(hwnd, IDC_BACK), x, y, 34, nav_h, TRUE); x += 38;
+    MoveWindow(GetDlgItem(hwnd, IDC_FORWARD), x, y, 34, nav_h, TRUE); x += 38;
+    MoveWindow(GetDlgItem(hwnd, IDC_RELOAD), x, y, 34, nav_h, TRUE); x += 42;
+
+    const int go_w = 64;
+    const int home_w = 74;
+    const int address_w = r.right - x - go_w - home_w - (pad * 2) - 8;
+    MoveWindow(g_address, x, y, address_w, nav_h, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_GO), x + address_w + 4, y, go_w, nav_h, TRUE);
+    MoveWindow(GetDlgItem(hwnd, IDC_HOME), x + address_w + go_w + 8, y, home_w, nav_h, TRUE);
+
+    const int hero_y = y + nav_h + 12;
+    const int hero_h = 220;
+    MoveWindow(g_hero_title, pad + 24, hero_y + 40, 620, 54, TRUE);
+    MoveWindow(g_hero_subtitle, pad + 24, hero_y + 100, 620, 44, TRUE);
+
+    const int cards_y = hero_y + hero_h - 88;
+    const int card_w = (r.right - (pad * 2) - 24) / 3;
+    MoveWindow(g_card_1, pad + 6, cards_y, card_w, 82, TRUE);
+    MoveWindow(g_card_2, pad + 12 + card_w, cards_y, card_w, 82, TRUE);
+    MoveWindow(g_card_3, pad + 18 + (card_w * 2), cards_y, card_w, 82, TRUE);
+
+    const int page_y = hero_y + hero_h + 12;
+    MoveWindow(g_page, pad, page_y, r.right - (pad * 2), r.bottom - page_y - pad, TRUE);
+}
+
+void show_loaded_content(const std::string& url, const std::string& page) {
+    SetWindowTextA(g_address, url.c_str());
+    SetWindowTextA(g_page, page.empty() ? "(No renderable content)" : page.c_str());
+
+    SetWindowTextW(g_hero_title, L"EXPLORE THE OPEN WEB");
+    SetWindowTextW(g_hero_subtitle, L"Privacy-first, open-source browsing with a modern desktop feel.");
+}
+
+void load(HWND hwnd, const std::string& url, bool push_history) {
     try {
-        HttpResponse r = http_get(url);
-        
-        // Extract CSS from style tags
-        std::string css;
-        size_t style_start = r.body.find("<style>");
-        while (style_start != std::string::npos) {
-            size_t style_end = r.body.find("</style>", style_start);
-            if (style_end != std::string::npos) {
-                css += r.body.substr(style_start + 7, style_end - (style_start + 7));
-                style_start = r.body.find("<style>", style_end);
-            } else {
-                break;
+        const HttpResponse resp = http_get(url);
+        const std::string page = render_page_text(resp.body, 110);
+        show_loaded_content(url, page);
+
+        if (push_history) {
+            if (g_history_index + 1 < static_cast<int>(g_history.size())) g_history.resize(g_history_index + 1);
+            if (g_history.empty() || g_history.back() != url) {
+                g_history.push_back(url);
+                g_history_index = static_cast<int>(g_history.size()) - 1;
             }
         }
-        
-        // Parse document with DOM and CSS
-        browser::RenderContext ctx = browser::parse_document(r.body, css);
-        
-        // Extract text and links for now (we'll add proper rendering later)
-        std::string plain;
-        std::vector<std::pair<std::string,std::string>> links;
-        extract_text_and_links(r.body, plain, links);
-
-        // update text control
-        SetWindowTextA(hwndText, plain.c_str());
-
-        // update listbox
-        SendMessage(hwndLinks, LB_RESETCONTENT, 0, 0);
-        for (size_t i = 0; i < links.size(); ++i) {
-            std::ostringstream item;
-            item << (i+1) << ": " << links[i].first << " -> " << links[i].second;
-            SendMessageA(hwndLinks, LB_ADDSTRING, 0, (LPARAM)item.str().c_str());
-        }
-
-        // push history
-        if (hist_index + 1 < (int)history.size()) history.resize(hist_index+1);
-        history.push_back(url);
-        hist_index = (int)history.size() - 1;
-
-    } catch (const std::exception &ex) {
-        SetWindowTextA(hwndText, ex.what());
+    } catch (const std::exception& ex) {
+        SetWindowTextA(g_page, ex.what());
     }
+
+    update_nav(hwnd);
 }
 
-static std::string get_address_text() {
-    int len = GetWindowTextLengthW(hwndAddress);
-    std::wstring w;
-    w.resize(len);
-    GetWindowTextW(hwndAddress, &w[0], len+1);
-    std::string s;
-    s.assign(w.begin(), w.end());
-    return s;
-}
+}  // namespace
 
-LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam) {
+LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam) {
     switch (msg) {
-    case WM_CREATE: {
-        hwndAddress = CreateWindowW(L"EDIT", L"http://example.com", WS_CHILD | WS_VISIBLE | WS_BORDER | ES_LEFT, 10,10,420,24, hWnd, NULL, NULL, NULL);
-        hwndGo = CreateWindowW(L"BUTTON", L"Go", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 440, 10, 50, 24, hWnd, (HMENU)1001, NULL, NULL);
-        hwndBack = CreateWindowW(L"BUTTON", L"◀", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 500, 10, 36, 24, hWnd, (HMENU)1002, NULL, NULL);
-        hwndForward = CreateWindowW(L"BUTTON", L"▶", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 540, 10, 36, 24, hWnd, (HMENU)1003, NULL, NULL);
+        case WM_CREATE: {
+            g_brush_bg = CreateSolidBrush(kBg);
+            g_brush_top = CreateSolidBrush(kTop);
+            g_brush_hero = CreateSolidBrush(kHero);
+            g_brush_card = CreateSolidBrush(kCard);
 
-        hwndText = CreateWindowW(L"EDIT", NULL, WS_CHILD | WS_VISIBLE | WS_BORDER | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | WS_VSCROLL, 10, 50, 560, 360, hWnd, NULL, NULL, NULL);
-        hwndLinks = CreateWindowW(L"LISTBOX", NULL, WS_CHILD | WS_VISIBLE | LBS_NOTIFY | WS_VSCROLL, 580, 50, 260, 360, hWnd, NULL, NULL, NULL);
-        break; }
+            g_font_ui = CreateFontW(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                                    OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                                    DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+            g_font_title = CreateFontW(-48, 0, 0, 0, FW_BOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                                       OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                                       DEFAULT_PITCH | FF_DONTCARE, L"Georgia");
+            g_font_tabs = CreateFontW(-15, 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE, DEFAULT_CHARSET,
+                                      OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, CLEARTYPE_QUALITY,
+                                      DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
 
-    case WM_COMMAND: {
-        int id = LOWORD(wParam);
-        if (id == 1001) { // Go
-            std::string url = get_address_text();
-            if (url.find("://") == std::string::npos) url = "http://" + url;
-            load_url_into_ui(url);
-        } else if (id == 1002) { // back
-            if (hist_index > 0) {
-                hist_index -= 1;
-                load_url_into_ui(history[hist_index]);
-            }
-        } else if (id == 1003) { // forward
-            if (hist_index + 1 < (int)history.size()) {
-                hist_index += 1;
-                load_url_into_ui(history[hist_index]);
-            }
-        } else if (HIWORD(wParam) == LBN_DBLCLK && (HWND)lParam == hwndLinks) {
-            int sel = (int)SendMessage(hwndLinks, LB_GETCURSEL, 0, 0);
-            if (sel != LB_ERR) {
-                char buf[1024];
-                SendMessageA(hwndLinks, LB_GETTEXT, sel, (LPARAM)buf);
-                // parse stored item 'N: text -> href' to extract href
-                std::string item(buf);
-                auto pos = item.rfind(" -> ");
-                if (pos != std::string::npos) {
-                    std::string href = item.substr(pos + 4);
-                    std::string base = get_address_text();
-                    std::string next;
-                    if (href.rfind("http://", 0) == 0) next = href;
-                    else {
-                        UrlParts parts; parse_url(base, parts);
-                        if (!href.empty() && href[0] == '/') next = parts.scheme + "://" + parts.host + href;
-                        else {
-                            std::string b = parts.path;
-                            auto p = b.rfind('/');
-                            if (p == std::string::npos) b = "/"; else b = b.substr(0, p+1);
-                            next = parts.scheme + "://" + parts.host + b + href;
-                        }
-                    }
-                    SetWindowTextA(hwndAddress, next.c_str());
-                    load_url_into_ui(next);
-                }
-            }
+            CreateWindowW(L"BUTTON", L"  🌐  Explore Destinations   ✕", WS_CHILD | WS_VISIBLE | BS_FLAT,
+                          0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(IDC_TAB_1), nullptr, nullptr);
+            CreateWindowW(L"BUTTON", L"  ✈  Book Flights", WS_CHILD | WS_VISIBLE | BS_FLAT,
+                          0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(IDC_TAB_2), nullptr, nullptr);
+            CreateWindowW(L"BUTTON", L"  ⚙  Settings", WS_CHILD | WS_VISIBLE | BS_FLAT,
+                          0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(IDC_TAB_3), nullptr, nullptr);
+
+            CreateWindowW(L"BUTTON", L"←", WS_CHILD | WS_VISIBLE | BS_FLAT,
+                          0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(IDC_BACK), nullptr, nullptr);
+            CreateWindowW(L"BUTTON", L"→", WS_CHILD | WS_VISIBLE | BS_FLAT,
+                          0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(IDC_FORWARD), nullptr, nullptr);
+            CreateWindowW(L"BUTTON", L"↻", WS_CHILD | WS_VISIBLE | BS_FLAT,
+                          0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(IDC_RELOAD), nullptr, nullptr);
+
+            g_address = CreateWindowW(L"EDIT", L"https://duckduckgo.com",
+                                      WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
+                                      0, 0, 0, 0, hwnd, nullptr, nullptr, nullptr);
+
+            CreateWindowW(L"BUTTON", L"Go", WS_CHILD | WS_VISIBLE | BS_FLAT,
+                          0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(IDC_GO), nullptr, nullptr);
+            CreateWindowW(L"BUTTON", L"Home", WS_CHILD | WS_VISIBLE | BS_FLAT,
+                          0, 0, 0, 0, hwnd, reinterpret_cast<HMENU>(IDC_HOME), nullptr, nullptr);
+
+            g_hero_title = CreateWindowW(L"STATIC", L"EXPLORE THE OPEN WEB", WS_CHILD | WS_VISIBLE,
+                                         0, 0, 0, 0, hwnd, nullptr, nullptr, nullptr);
+            g_hero_subtitle = CreateWindowW(L"STATIC", L"Privacy-first, open-source browsing with a modern desktop feel.", WS_CHILD | WS_VISIBLE,
+                                            0, 0, 0, 0, hwnd, nullptr, nullptr, nullptr);
+
+            g_card_1 = CreateWindowW(L"STATIC", L"1. Open Source Core\nLearn More", WS_CHILD | WS_VISIBLE | SS_LEFT,
+                                     0, 0, 0, 0, hwnd, nullptr, nullptr, nullptr);
+            g_card_2 = CreateWindowW(L"STATIC", L"2. Secure by Default\nLearn More", WS_CHILD | WS_VISIBLE | SS_LEFT,
+                                     0, 0, 0, 0, hwnd, nullptr, nullptr, nullptr);
+            g_card_3 = CreateWindowW(L"STATIC", L"3. Rust Engine\nLearn More", WS_CHILD | WS_VISIBLE | SS_LEFT,
+                                     0, 0, 0, 0, hwnd, nullptr, nullptr, nullptr);
+
+            g_page = CreateWindowW(L"EDIT", nullptr,
+                                   WS_CHILD | WS_VISIBLE | WS_BORDER | ES_MULTILINE | ES_AUTOVSCROLL | ES_READONLY | WS_VSCROLL,
+                                   0, 0, 0, 0, hwnd, nullptr, nullptr, nullptr);
+
+            SendMessageW(g_address, WM_SETFONT, reinterpret_cast<WPARAM>(g_font_ui), TRUE);
+            SendMessageW(g_page, WM_SETFONT, reinterpret_cast<WPARAM>(g_font_ui), TRUE);
+            SendMessageW(g_hero_title, WM_SETFONT, reinterpret_cast<WPARAM>(g_font_title), TRUE);
+            SendMessageW(g_hero_subtitle, WM_SETFONT, reinterpret_cast<WPARAM>(g_font_ui), TRUE);
+            SendMessageW(g_card_1, WM_SETFONT, reinterpret_cast<WPARAM>(g_font_ui), TRUE);
+            SendMessageW(g_card_2, WM_SETFONT, reinterpret_cast<WPARAM>(g_font_ui), TRUE);
+            SendMessageW(g_card_3, WM_SETFONT, reinterpret_cast<WPARAM>(g_font_ui), TRUE);
+            SendMessageW(GetDlgItem(hwnd, IDC_TAB_1), WM_SETFONT, reinterpret_cast<WPARAM>(g_font_tabs), TRUE);
+            SendMessageW(GetDlgItem(hwnd, IDC_TAB_2), WM_SETFONT, reinterpret_cast<WPARAM>(g_font_tabs), TRUE);
+            SendMessageW(GetDlgItem(hwnd, IDC_TAB_3), WM_SETFONT, reinterpret_cast<WPARAM>(g_font_tabs), TRUE);
+
+            layout(hwnd);
+            update_nav(hwnd);
+            return 0;
         }
-        break; }
 
-    case WM_DESTROY:
-        PostQuitMessage(0);
-        return 0;
+        case WM_SIZE:
+            layout(hwnd);
+            return 0;
+
+        case WM_CTLCOLORSTATIC: {
+            HDC hdc = reinterpret_cast<HDC>(wParam);
+            HWND ctl = reinterpret_cast<HWND>(lParam);
+            SetBkMode(hdc, TRANSPARENT);
+            SetTextColor(hdc, (ctl == g_hero_subtitle) ? kMuted : kText);
+
+            if (ctl == g_hero_title || ctl == g_hero_subtitle) return reinterpret_cast<LRESULT>(g_brush_hero);
+            if (ctl == g_card_1 || ctl == g_card_2 || ctl == g_card_3) return reinterpret_cast<LRESULT>(g_brush_card);
+            return reinterpret_cast<LRESULT>(g_brush_bg);
+        }
+
+        case WM_CTLCOLOREDIT: {
+            HDC hdc = reinterpret_cast<HDC>(wParam);
+            SetBkMode(hdc, OPAQUE);
+            SetTextColor(hdc, kText);
+            SetBkColor(hdc, RGB(20, 28, 45));
+            return reinterpret_cast<LRESULT>(g_brush_top);
+        }
+
+        case WM_COMMAND: {
+            const int id = LOWORD(wParam);
+            if (id == IDC_GO) {
+                load(hwnd, normalize(address_text()), true);
+            } else if (id == IDC_BACK && g_history_index > 0) {
+                --g_history_index;
+                load(hwnd, g_history[g_history_index], false);
+            } else if (id == IDC_FORWARD && g_history_index + 1 < static_cast<int>(g_history.size())) {
+                ++g_history_index;
+                load(hwnd, g_history[g_history_index], false);
+            } else if (id == IDC_RELOAD) {
+                load(hwnd, normalize(address_text()), false);
+            } else if (id == IDC_HOME) {
+                load(hwnd, "https://duckduckgo.com", true);
+            }
+            return 0;
+        }
+
+        case WM_PAINT: {
+            PAINTSTRUCT ps{};
+            HDC hdc = BeginPaint(hwnd, &ps);
+
+            RECT r{};
+            GetClientRect(hwnd, &r);
+            FillRect(hdc, &r, g_brush_bg);
+
+            RECT top = r;
+            top.bottom = 118;
+            FillRect(hdc, &top, g_brush_top);
+
+            RECT hero = r;
+            hero.left += 14;
+            hero.right -= 14;
+            hero.top = 102;
+            hero.bottom = 322;
+            FillRect(hdc, &hero, g_brush_hero);
+
+            EndPaint(hwnd, &ps);
+            return 0;
+        }
+
+        case WM_DESTROY:
+            if (g_font_ui) DeleteObject(g_font_ui);
+            if (g_font_title) DeleteObject(g_font_title);
+            if (g_font_tabs) DeleteObject(g_font_tabs);
+            if (g_brush_bg) DeleteObject(g_brush_bg);
+            if (g_brush_top) DeleteObject(g_brush_top);
+            if (g_brush_hero) DeleteObject(g_brush_hero);
+            if (g_brush_card) DeleteObject(g_brush_card);
+            PostQuitMessage(0);
+            return 0;
     }
-    return DefWindowProcW(hWnd, msg, wParam, lParam);
+
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 
-int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nCmdShow) {
-    const wchar_t CLASS_NAME[]  = L"MiniBrowserClass";
+int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int nCmdShow) {
+    constexpr wchar_t kClassName[] = L"ZephyrBrowserWindow";
 
-    WNDCLASSW wc = {};
+    WNDCLASSW wc{};
     wc.lpfnWndProc = WndProc;
     wc.hInstance = hInstance;
-    wc.lpszClassName = CLASS_NAME;
-
+    wc.hCursor = LoadCursor(nullptr, IDC_ARROW);
+    wc.hbrBackground = reinterpret_cast<HBRUSH>(COLOR_WINDOW + 1);
+    wc.lpszClassName = kClassName;
     RegisterClassW(&wc);
 
-    HWND hwnd = CreateWindowExW(0, CLASS_NAME, L"Mini GUI Browser", WS_OVERLAPPEDWINDOW,
-        CW_USEDEFAULT, CW_USEDEFAULT, 860, 480, NULL, NULL, hInstance, NULL);
-
+    HWND hwnd = CreateWindowExW(0, kClassName, L"Zephyr Browser - Glass UI",
+                                WS_OVERLAPPEDWINDOW,
+                                CW_USEDEFAULT, CW_USEDEFAULT, 1240, 820,
+                                nullptr, nullptr, hInstance, nullptr);
     if (!hwnd) return 0;
 
     ShowWindow(hwnd, nCmdShow);
     UpdateWindow(hwnd);
-
-    // initial load
-    SetWindowTextW(hwndAddress, L"http://example.com");
-    load_url_into_ui("http://example.com");
+    load(hwnd, "https://duckduckgo.com", true);
 
     MSG msg;
-    while (GetMessageW(&msg, NULL, 0, 0)) {
+    while (GetMessageW(&msg, nullptr, 0, 0)) {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
-
     return 0;
 }
