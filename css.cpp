@@ -1,160 +1,239 @@
 #include "css.h"
+
+#include <algorithm>
 #include <cctype>
 #include <sstream>
-#include <algorithm>
 
 namespace browser {
+namespace {
+
+std::string lower(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return s;
+}
+
+std::string trim(const std::string& s) {
+    const size_t b = s.find_first_not_of(" \t\r\n");
+    if (b == std::string::npos) return "";
+    const size_t e = s.find_last_not_of(" \t\r\n");
+    return s.substr(b, e - b + 1);
+}
+
+int parse_px(const std::string& s) {
+    std::string n;
+    for (char c : s) {
+        if ((c >= '0' && c <= '9') || c == '-') n.push_back(c);
+        else break;
+    }
+    if (n.empty() || n == "-") return 0;
+    return std::stoi(n);
+}
+
+Color parse_color(const std::string& s) {
+    const std::string v = lower(trim(s));
+    if (v == "red") return {255, 0, 0, 255};
+    if (v == "green") return {0, 128, 0, 255};
+    if (v == "blue") return {0, 0, 255, 255};
+    if (v == "black") return {0, 0, 0, 255};
+    if (v == "white") return {255, 255, 255, 255};
+    if (v.size() == 7 && v[0] == '#') {
+        auto h = [](char c) -> int {
+            if (c >= '0' && c <= '9') return c - '0';
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            if (c >= 'a' && c <= 'f') return 10 + c - 'a';
+            return 0;
+        };
+        return {h(v[1]) * 16 + h(v[2]), h(v[3]) * 16 + h(v[4]), h(v[5]) * 16 + h(v[6]), 255};
+    }
+    return {};
+}
+
+std::string strip_comments(const std::string& in) {
+    std::string out;
+    for (size_t i = 0; i < in.size();) {
+        if (i + 1 < in.size() && in[i] == '/' && in[i + 1] == '*') {
+            size_t end = in.find("*/", i + 2);
+            if (end == std::string::npos) break;
+            i = end + 2;
+            continue;
+        }
+        out.push_back(in[i++]);
+    }
+    return out;
+}
+
+Selector parse_selector(std::string text) {
+    Selector s;
+    text = trim(lower(text));
+
+    size_t space = text.find(' ');
+    if (space != std::string::npos) {
+        s.ancestor_tag = trim(text.substr(0, space));
+        text = trim(text.substr(space + 1));
+    }
+
+    std::string token;
+    for (size_t i = 0; i <= text.size(); ++i) {
+        const char c = (i < text.size()) ? text[i] : '\0';
+        if (c == '#' || c == '.' || c == '\0') {
+            if (!token.empty() && s.tag.empty()) s.tag = token;
+            token.clear();
+            if (c == '#') {
+                size_t j = i + 1;
+                while (j < text.size() && text[j] != '.' && text[j] != '#') ++j;
+                s.id = text.substr(i + 1, j - (i + 1));
+                i = j - 1;
+            } else if (c == '.') {
+                size_t j = i + 1;
+                while (j < text.size() && text[j] != '.' && text[j] != '#') ++j;
+                s.classes.push_back(text.substr(i + 1, j - (i + 1)));
+                i = j - 1;
+            }
+        } else {
+            token.push_back(c);
+        }
+    }
+
+    return s;
+}
+
+int specificity_of(const Selector& s) {
+    int sp = 0;
+    if (!s.id.empty()) sp += 100;
+    sp += static_cast<int>(s.classes.size()) * 10;
+    if (!s.tag.empty()) sp += 1;
+    if (!s.ancestor_tag.empty()) sp += 1;
+    return sp;
+}
+
+bool matches(const Selector& s, const ElementPtr& el) {
+    if (!s.tag.empty() && s.tag != el->tag_name) return false;
+    if (!s.id.empty() && el->getAttribute("id") != s.id) return false;
+
+    if (!s.classes.empty()) {
+        std::istringstream iss(el->getAttribute("class"));
+        std::vector<std::string> cls;
+        std::string c;
+        while (iss >> c) cls.push_back(c);
+        for (const auto& need : s.classes) {
+            if (std::find(cls.begin(), cls.end(), need) == cls.end()) return false;
+        }
+    }
+
+    if (!s.ancestor_tag.empty()) {
+        auto p = el->parent.lock();
+        bool found = false;
+        while (p) {
+            if (p->tag_name == s.ancestor_tag) {
+                found = true;
+                break;
+            }
+            p = p->parent.lock();
+        }
+        if (!found) return false;
+    }
+
+    return true;
+}
+
+void apply_decl(StyleProperties& p, std::string name, std::string value) {
+    name = lower(trim(name));
+    value = trim(value);
+    if (name == "display") {
+        p.display = lower(value);
+        p.has_display = true;
+    } else if (name == "color") {
+        p.color = parse_color(value);
+        p.has_color = true;
+    } else if (name == "font-size") {
+        p.font_size = parse_px(value);
+        p.has_font_size = true;
+    } else if (name == "padding") {
+        const int v = parse_px(value);
+        p.padding_top = p.padding_right = p.padding_bottom = p.padding_left = v;
+        p.has_padding = true;
+    }
+}
+
+}  // namespace
 
 void StyleSheet::addRule(const Selector& selector, const StyleProperties& properties) {
-    rules.push_back({selector, properties});
+    rules_.push_back({selector, properties, specificity_of(selector), next_order_++});
 }
 
 StyleProperties StyleSheet::computeStyle(const ElementPtr& element) const {
-    StyleProperties result;
-    
-    // Apply matching rules
-    for (const auto& rule : rules) {
-        bool matches = true;
-        
-        // Check tag name
-        if (!rule.selector.tag.empty() && rule.selector.tag != element->tag_name) {
-            matches = false;
+    StyleProperties out;
+    std::vector<Rule> applicable;
+    for (const auto& r : rules_) {
+        if (matches(r.selector, element)) applicable.push_back(r);
+    }
+
+    std::sort(applicable.begin(), applicable.end(), [](const Rule& a, const Rule& b) {
+        if (a.specificity != b.specificity) return a.specificity < b.specificity;
+        return a.order < b.order;
+    });
+
+    for (const auto& r : applicable) {
+        if (r.properties.has_display) {
+            out.display = r.properties.display;
+            out.has_display = true;
         }
-        
-        // Check ID
-        if (!rule.selector.id.empty()) {
-            auto id = element->getAttribute("id");
-            if (id != rule.selector.id) {
-                matches = false;
-            }
+        if (r.properties.has_color) {
+            out.color = r.properties.color;
+            out.has_color = true;
         }
-        
-        // Check classes
-        if (!rule.selector.classes.empty()) {
-            auto class_attr = element->getAttribute("class");
-            std::istringstream iss(class_attr);
-            std::vector<std::string> classes;
-            std::string cls;
-            while (iss >> cls) {
-                classes.push_back(cls);
-            }
-            
-            for (const auto& required_class : rule.selector.classes) {
-                if (std::find(classes.begin(), classes.end(), required_class) == classes.end()) {
-                    matches = false;
-                    break;
-                }
-            }
+        if (r.properties.has_font_size) {
+            out.font_size = r.properties.font_size;
+            out.has_font_size = true;
         }
-        
-        if (matches) {
-            // Apply the matching rule's properties
-            result = rule.properties;
+        if (r.properties.has_padding) {
+            out.padding_top = r.properties.padding_top;
+            out.padding_right = r.properties.padding_right;
+            out.padding_bottom = r.properties.padding_bottom;
+            out.padding_left = r.properties.padding_left;
+            out.has_padding = true;
         }
     }
-    
-    return result;
+
+    return out;
 }
 
-// Helper function to parse color values
-Color parse_color(const std::string& value) {
-    if (value == "black") return Color(0, 0, 0);
-    if (value == "white") return Color(255, 255, 255);
-    if (value == "red") return Color(255, 0, 0);
-    if (value == "green") return Color(0, 255, 0);
-    if (value == "blue") return Color(0, 0, 255);
-    return Color(0, 0, 0); // Default to black
-}
-
-// Helper function to parse dimension values
-int parse_dimension(const std::string& value) {
-    if (value.empty()) return 0;
-    try {
-        size_t px_pos = value.find("px");
-        if (px_pos != std::string::npos) {
-            return std::stoi(value.substr(0, px_pos));
-        }
-        return std::stoi(value);
-    } catch (...) {
-        return 0;
-    }
-}
-
-StyleSheet parse_css(const std::string& css) {
+StyleSheet parse_css(const std::string& css_text) {
     StyleSheet sheet;
+    const std::string clean = strip_comments(css_text);
+
     size_t pos = 0;
-    
-    while (pos < css.length()) {
-        // Skip whitespace
-        while (pos < css.length() && std::isspace(css[pos])) pos++;
-        if (pos >= css.length()) break;
-        
-        // Parse selector
-        StyleSheet::Selector selector;
-        std::string selector_text;
-        size_t brace_start = css.find('{', pos);
-        if (brace_start == std::string::npos) break;
-        
-        selector_text = css.substr(pos, brace_start - pos);
-        // Simple selector parsing (just tag names for now)
-        selector.tag = selector_text;
-        
-        // Find closing brace
-        size_t brace_end = css.find('}', brace_start);
-        if (brace_end == std::string::npos) break;
-        
-        // Parse properties
-        StyleProperties properties;
-        std::string props = css.substr(brace_start + 1, brace_end - brace_start - 1);
-        std::istringstream iss(props);
-        std::string prop;
-        
-        while (std::getline(iss, prop, ';')) {
-            size_t colon = prop.find(':');
-            if (colon != std::string::npos) {
-                std::string name = prop.substr(0, colon);
-                std::string value = prop.substr(colon + 1);
-                
-                // Trim whitespace
-                name.erase(0, name.find_first_not_of(" \t"));
-                name.erase(name.find_last_not_of(" \t") + 1);
-                value.erase(0, value.find_first_not_of(" \t"));
-                value.erase(value.find_last_not_of(" \t") + 1);
-                
-                // Set property values
-                if (name == "color") {
-                    properties.color = parse_color(value);
-                }
-                else if (name == "background-color") {
-                    properties.background_color = parse_color(value);
-                }
-                else if (name == "font-family") {
-                    properties.font_family = value;
-                }
-                else if (name == "font-size") {
-                    properties.font_size = parse_dimension(value);
-                }
-                else if (name == "font-weight") {
-                    properties.font_weight = value;
-                }
-                else if (name == "margin") {
-                    int margin = parse_dimension(value);
-                    properties.margin_top = properties.margin_right = 
-                    properties.margin_bottom = properties.margin_left = margin;
-                }
-                else if (name == "padding") {
-                    int padding = parse_dimension(value);
-                    properties.padding_top = properties.padding_right = 
-                    properties.padding_bottom = properties.padding_left = padding;
-                }
+    while (pos < clean.size()) {
+        const size_t open = clean.find('{', pos);
+        if (open == std::string::npos) break;
+        const size_t close = clean.find('}', open + 1);
+        if (close == std::string::npos) break;
+
+        const std::string selectors = clean.substr(pos, open - pos);
+        const std::string body = clean.substr(open + 1, close - open - 1);
+
+        StyleProperties props;
+        std::istringstream decls(body);
+        std::string d;
+        while (std::getline(decls, d, ';')) {
+            size_t colon = d.find(':');
+            if (colon == std::string::npos) continue;
+            apply_decl(props, d.substr(0, colon), d.substr(colon + 1));
+        }
+
+        std::istringstream sels(selectors);
+        std::string s;
+        while (std::getline(sels, s, ',')) {
+            Selector parsed = parse_selector(s);
+            if (!parsed.tag.empty() || !parsed.id.empty() || !parsed.classes.empty() || !parsed.ancestor_tag.empty()) {
+                sheet.addRule(parsed, props);
             }
         }
-        
-        sheet.addRule(selector, properties);
-        pos = brace_end + 1;
+
+        pos = close + 1;
     }
-    
+
     return sheet;
 }
 
-} // namespace browser
+}  // namespace browser

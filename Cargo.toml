@@ -1,0 +1,30 @@
+[package]
+name = "zephyr"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+name = "zephyr"
+path = "src/lib.rs"
+
+[[bin]]
+name = "zephyr"
+path = "src/main.rs"
+
+[[bin]]
+name = "zephyr_gui"
+path = "src/bin/zephyr_gui.rs"
+
+[dependencies]
+anyhow = "1"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "native-tls", "brotli", "gzip", "deflate"] }
+scraper = "0.24"
+url = "2.5"
+html5ever = "0.35"
+markup5ever_rcdom = "0.35"
+cssparser = "0.35"
+boa_engine = "0.20"
+eframe = { version = "0.33", default-features = true }
+
+[dev-dependencies]
+pretty_assertions = "1"
