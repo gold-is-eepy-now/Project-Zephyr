@@ -1,57 +1,58 @@
 #pragma once
 
 #include "dom.h"
+
 #include <string>
-#include <map>
 #include <vector>
 
 namespace browser {
 
 struct Color {
-    unsigned char r, g, b, a;
-    Color() : r(0), g(0), b(0), a(255) {}
-    Color(unsigned char r, unsigned char g, unsigned char b, unsigned char a = 255)
-        : r(r), g(g), b(b), a(a) {}
+    int r = 0;
+    int g = 0;
+    int b = 0;
+    int a = 255;
 };
 
 struct StyleProperties {
-    std::string display = "block";
-    Color color{0, 0, 0};
-    Color background_color{255, 255, 255};
-    std::string font_family = "Arial";
+    std::string display;
+    Color color;
     int font_size = 16;
-    std::string font_weight = "normal";
-    int margin_top = 0;
-    int margin_right = 0;
-    int margin_bottom = 0;
-    int margin_left = 0;
     int padding_top = 0;
     int padding_right = 0;
     int padding_bottom = 0;
     int padding_left = 0;
+
+    bool has_display = false;
+    bool has_color = false;
+    bool has_font_size = false;
+    bool has_padding = false;
+};
+
+struct Selector {
+    std::string ancestor_tag;
+    std::string tag;
+    std::string id;
+    std::vector<std::string> classes;
 };
 
 class StyleSheet {
 public:
-    struct Selector {
-        std::string tag;
-        std::string id;
-        std::vector<std::string> classes;
-    };
-    
+    void addRule(const Selector& selector, const StyleProperties& properties);
+    StyleProperties computeStyle(const ElementPtr& element) const;
+
+private:
     struct Rule {
         Selector selector;
         StyleProperties properties;
+        int specificity = 0;
+        size_t order = 0;
     };
-    
-    void addRule(const Selector& selector, const StyleProperties& properties);
-    StyleProperties computeStyle(const ElementPtr& element) const;
-    
-private:
-    std::vector<Rule> rules;
+
+    std::vector<Rule> rules_;
+    size_t next_order_ = 0;
 };
 
-// CSS Parser
-StyleSheet parse_css(const std::string& css);
+StyleSheet parse_css(const std::string& css_text);
 
-} // namespace browser
+}  // namespace browser

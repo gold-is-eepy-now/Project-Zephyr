@@ -1,17 +1,13 @@
 #pragma once
 
+#include <map>
+#include <memory>
 #include <string>
 #include <vector>
-#include <memory>
-#include <map>
 
 namespace browser {
 
-enum class NodeType {
-    ELEMENT,
-    TEXT,
-    COMMENT
-};
+enum class NodeType { ELEMENT, TEXT, COMMENT };
 
 class Node;
 class Element;
@@ -22,45 +18,37 @@ using ElementPtr = std::shared_ptr<Element>;
 
 class Node {
 public:
+    explicit Node(NodeType t) : type(t) {}
+    virtual ~Node() = default;
+
     NodeType type;
     std::weak_ptr<Element> parent;
-    virtual ~Node() = default;
-    
-protected:
-    Node(NodeType t) : type(t) {}
 };
 
 class Element : public Node, public std::enable_shared_from_this<Element> {
 public:
+    explicit Element(const std::string& name);
+
+    static ElementPtr create(const std::string& name);
+
     std::string tag_name;
     std::map<std::string, std::string> attributes;
     std::vector<NodePtr> children;
-    
-    static ElementPtr create(const std::string& tag) {
-        return std::shared_ptr<Element>(new Element(tag));
-    }
-    
-    void appendChild(NodePtr child);
-    std::string getAttribute(const std::string& name) const;
-    void setAttribute(const std::string& name, const std::string& value);
-    
-private:
-    Element(const std::string& tag) : Node(NodeType::ELEMENT), tag_name(tag) {}
+
+    void appendChild(const NodePtr& child);
+    std::string getAttribute(const std::string& key) const;
+    void setAttribute(const std::string& key, const std::string& value);
 };
 
 class TextNode : public Node {
 public:
+    explicit TextNode(const std::string& t);
+
+    static std::shared_ptr<TextNode> create(const std::string& t);
+
     std::string text;
-    
-    static std::shared_ptr<TextNode> create(const std::string& content) {
-        return std::shared_ptr<TextNode>(new TextNode(content));
-    }
-    
-private:
-    TextNode(const std::string& content) : Node(NodeType::TEXT), text(content) {}
 };
 
-// DOM Parser
 ElementPtr parse_html(const std::string& html);
 
-} // namespace browser
+}  // namespace browser
